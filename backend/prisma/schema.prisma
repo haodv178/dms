@@ -1,0 +1,85 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  ADMIN
+  WAREHOUSE
+  DRIVER
+}
+
+enum OrderStatus {
+  NEW
+  PICKING
+  PACKED
+  DELIVERING
+  COMPLETED
+  FAILED
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  email     String   @unique
+  password  String
+  name      String
+  role      Role     @default(WAREHOUSE)
+  trips     Trip[]
+  createdAt DateTime @default(now())
+}
+
+model Store {
+  id        Int      @id @default(autoincrement())
+  name      String
+  address   String
+  latitude  Float    // Điểm xuất phát (Depot) cho thuật toán VRP
+  longitude Float
+  orders    Order[]
+  trips     Trip[]
+}
+
+model Order {
+  id               Int         @id @default(autoincrement())
+  orderCode        String      @unique
+  storeId          Int
+  store            Store       @relation(fields: [storeId], references: [id])
+  customerName     String
+  customerPhone    String
+  customerAddress  String
+  latitude         Float       // Tọa độ GPS khách hàng
+  longitude        Float
+  totalAmount      Decimal     @db.Decimal(10, 2)
+  status           OrderStatus @default(NEW)
+  items            OrderItem[]
+  tripId           Int?
+  trip             Trip?       @relation(fields: [tripId], references: [id])
+  deliverySequence Int?        // Thứ tự dừng xe do OR-Tools tối ưu (1, 2, 3...)
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+}
+
+model OrderItem {
+  id          Int     @id @default(autoincrement())
+  orderId     Int
+  order       Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productName String
+  quantity    Int
+  price       Decimal @db.Decimal(10, 2)
+}
+
+model Trip {
+  id            Int      @id @default(autoincrement())
+  tripCode      String   @unique
+  storeId       Int
+  store         Store    @relation(fields: [storeId], references: [id])
+  driverId      Int?
+  driver        User?    @relation(fields: [driverId], references: [id])
+  orders        Order[]
+  status        String   @default("ASSIGNED") // ASSIGNED | IN_TRANSIT | COMPLETED
+  totalDistance Float?   // Mét hoặc km
+  createdAt     DateTime @default(now())
+}

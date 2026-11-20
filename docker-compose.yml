@@ -1,0 +1,62 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: dms-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: dms_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - dms_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d dms_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  python-solver:
+    build:
+      context: ./python-solver
+      dockerfile: Dockerfile
+    container_name: dms-solver
+    restart: unless-stopped
+    ports:
+      - "8090:8090"
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: dms-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      python-solver:
+        condition: service_started
+    environment:
+      DATABASE_URL: "postgresql://postgres:password@postgres:5432/dms_db?schema=public"
+      PORT: 3000
+      PYTHON_SOLVER_URL: "http://python-solver:8090"
+      JWT_SECRET: "7f2d6ba91bf20760dcf193b151780c92495753e9576f5226ea32154bf42c6d84"
+    ports:
+      - "3000:3000"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: "/api"
+    container_name: dms-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "5173:80"
+
+volumes:
+  dms_pgdata:
