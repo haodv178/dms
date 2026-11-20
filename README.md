@@ -36,7 +36,8 @@ Mục tiêu chính là **trình diễn trọn vẹn luồng nghiệp vụ xử l
 - 1 Micro-service Helper:
   * Python FastAPI + Google OR-Tools (VRP Solver)
 - Frontend:
-  * React (Vite) + TailwindCSS + Leaflet Map
+  * React 19 (Vite 6) + Meta Astryx Design System (@astryxdesign/core & theme-neutral)
+  * Tailwind CSS v4 (Astryx Tailwind Bridge) + Leaflet Map (react-leaflet v5)
 ```
 
 ---
@@ -48,7 +49,7 @@ Mục tiêu chính là **trình diễn trọn vẹn luồng nghiệp vụ xử l
 ```text
                        ┌──────────────────────────────────────────────┐
                        │           Web Admin Dashboard (SPA)          │
-                       │   (React + Vite + TailwindCSS + Leaflet)     │
+                       │ (React 19 + Astryx + Tailwind v4 + Leaflet)  │
                        │             http://localhost:5173            │
                        └──────────────────────┬───────────────────────┘
                                               │ HTTP REST (/api/*)
@@ -106,15 +107,27 @@ doan/
 │   ├── requirements.txt         # Các thư viện Python (fastapi, uvicorn, ortools, pydantic)
 │   └── main.py                  # FastAPI endpoint POST /solve-vrp
 └── frontend/                    # Giao diện Web Admin Dashboard (:5173)
-    ├── Dockerfile               # Multi-stage build (Node Vite Builder -> Nginx Alpine)
+    ├── Dockerfile               # Multi-stage build (Node 22 Vite Builder -> Nginx Alpine)
     ├── nginx.conf               # Cấu hình Nginx phục vụ SPA & reverse-proxy /api/
+    ├── AGENTS.md                # Tài liệu hướng dẫn Astryx cho AI coding agents (generated)
     ├── index.html               # Tích hợp Leaflet CSS
-    ├── package.json
-    ├── tailwind.config.js
+    ├── package.json             # React 19, @astryxdesign/core, theme-neutral, cli, Tailwind v4
+    ├── vite.config.ts           # Cấu hình Vite 6 + @tailwindcss/vite
     └── src/
-        ├── App.tsx              # Giao diện chính: Top Bar Role Switcher, Bản đồ Leaflet
-        ├── main.tsx
-        └── index.css
+        ├── main.tsx             # Entrypoint (nạp index.css trước để giữ đúng @layer cascade)
+        ├── index.css            # Astryx @layer cascade + Tailwind v4 bridge + Leaflet popup styles
+        ├── astryx-themes.ts     # Module theme do `astryx theme add neutral` sinh tự động
+        ├── App.tsx              # Root <Theme>, <LayerProvider>, state điều phối & Toast
+        ├── types/
+        │   └── dms.ts           # Domain types, metadata vai trò/trạng thái & format tiền tệ
+        ├── api/
+        │   └── dmsApi.ts        # Axios client gọi REST API Backend
+        └── components/
+            ├── Header.tsx           # Top Bar: Role Selector, Light/System/Dark toggle, Seed/New
+            ├── OrderTable.tsx       # Action banner OR-Tools, TabList lọc trạng thái & bảng đơn
+            ├── RouteMap.tsx         # Bản đồ Leaflet OSM / CARTO Dark Matter theo theme
+            ├── ActiveTripPanel.tsx  # Chi tiết chuyến xe & danh sách điểm dừng tối ưu
+            └── NewOrderModal.tsx    # Hộp thoại Astryx Dialog tạo đơn hàng mới
 ```
 
 ---
@@ -324,22 +337,24 @@ model Trip {
 
 ## 7. Đặc Tả Giao Diện Web Admin Dashboard
 
-Giao diện đơn trang (SPA) tại `http://localhost:5173` được chia làm 3 khu vực trực quan:
+Giao diện đơn trang (SPA) tại `http://localhost:5173` được xây dựng bằng **Meta Astryx Design System** (`@astryxdesign/core`, `@astryxdesign/theme-neutral`) kết hợp **Tailwind CSS v4** (qua Astryx Tailwind Bridge `@astryxdesign/core/tailwind-theme.css` và thứ tự `@layer` chuẩn), hỗ trợ đầy đủ **Light / System / Dark mode** và chia làm 3 khu vực trực quan:
 
-1. **Thanh Công Cụ Trên Cùng (Top Bar):**
-   - **Role Switcher:** Chuyển đổi tức thì giữa 3 vai trò (`Quản lý / Điều phối - ADMIN`, `Nhân viên Kho - WAREHOUSE`, `Tài xế Giao hàng - DRIVER`) mà không cần đăng xuất/đăng nhập lại.
-   - **Tạo đơn mới:** Mở hộp thoại thêm đơn hàng mới kèm tọa độ GPS.
-   - **Seed 10 Sample Orders:** Khôi phục/nạp nhanh 10 đơn hàng mẫu ở trạng thái `NEW` để bắt đầu buổi thuyết trình.
-2. **Bảng Điều Phối & Quản Lý Vòng Đời Đơn Hàng (Bên trái):**
-   - Các tab lọc đơn hàng theo trạng thái kèm số lượng thực tế.
+1. **Thanh Công Cụ Trên Cùng (Top Bar — `Header.tsx`):**
+   - **Role Switcher (`Selector`):** Chuyển đổi tức thì giữa 3 vai trò (`Quản lý / Điều phối - ADMIN`, `Nhân viên Kho - WAREHOUSE`, `Tài xế Giao hàng - DRIVER`) mà không cần đăng xuất/đăng nhập lại.
+   - **Theme Mode Switcher (`SegmentedControl`):** Chuyển đổi chế độ giao diện **Sáng / Hệ thống / Tối** (lưu trong `localStorage`), tự động đồng bộ toàn bộ token màu Astryx và lớp bản đồ Leaflet.
+   - **Tạo đơn mới (`Button` + `Dialog`):** Mở hộp thoại thêm đơn hàng mới kèm tọa độ GPS (`NewOrderModal.tsx`).
+   - **Seed 10 Sample Orders (`Button`):** Khôi phục/nạp nhanh 10 đơn hàng mẫu ở trạng thái `NEW` để bắt đầu buổi thuyết trình.
+2. **Bảng Điều Phối & Quản Lý Vòng Đời Đơn Hàng (Bên trái — `OrderTable.tsx`):**
+   - Các tab lọc đơn hàng theo trạng thái (`TabList` / `Tab`) kèm số lượng thực tế và chọn tất cả đơn `PACKED` (`CheckboxInput` hỗ trợ trạng thái `indeterminate`).
    - Nút tiện ích **"Đóng gói nhanh"** giúp chuyển nhanh các đơn `NEW`/`PICKING` sang `PACKED` khi muốn demo ngay thuật toán OR-Tools.
-   - Nút điểm nhấn **"⚡ Tối ưu hóa lộ trình với Google OR-Tools"** khi chọn các đơn `PACKED`.
-   - Các nút thao tác trực tiếp trên từng dòng đơn hàng (`Bắt đầu nhặt hàng`, `Đóng gói xong`, `Giao thành công`, `Giao thất bại`).
-3. **Bản Đồ Lộ Trình Leaflet & Chi Tiết Chuyến Xe (Bên phải):**
+   - Nút điểm nhấn **"Tối ưu hóa lộ trình với Google OR-Tools"** khi chọn các đơn `PACKED`.
+   - Bảng đơn hàng (`Table`, `Badge`, `Button`, `IconButton`) với các nút thao tác trực tiếp trên từng dòng (`Bắt đầu nhặt hàng`, `Đóng gói xong`, `Giao thành công`, `Giao thất bại`) và thông báo phản hồi qua Astryx `useToast()`.
+3. **Bản Đồ Lộ Trình Leaflet & Chi Tiết Chuyến Xe (Bên phải — `RouteMap.tsx` & `ActiveTripPanel.tsx`):**
+   - Tự động chuyển đổi tile bản đồ giữa **OpenStreetMap** (chế độ sáng) và **CARTO Dark Matter** (chế độ tối).
    - Hiển thị Marker **Kho xuất phát (Depot)** màu đỏ (`🏪`).
    - Hiển thị các điểm giao hàng bằng Marker tròn đánh số thứ tự dừng xe **`1, 2, 3...`** theo kết quả của Google OR-Tools.
    - Vẽ đường nối **Polyline** từ `Depot ➔ Stop #1 ➔ Stop #2 ➔ Stop #3...`.
-   - Thẻ thông tin chuyến xe bên dưới bản đồ hiển thị mã chuyến (`TRIP-...`), tên tài xế, tổng quãng đường (`km`/`m`) và danh sách các điểm dừng theo thứ tự.
+   - Thẻ thông tin chuyến xe (`Card`) bên dưới bản đồ hiển thị mã chuyến (`TRIP-...`), tên tài xế, tổng quãng đường (`km`/`m`) và danh sách các điểm dừng theo thứ tự.
 
 ---
 
@@ -392,6 +407,31 @@ curl -X POST http://localhost:3000/api/trips/optimize \
 # 5. Tài xế xác nhận giao hàng thành công
 curl -X PATCH http://localhost:3000/api/orders/1/complete-delivery
 ```
+
+---
+
+### 8.3. Phát Triển Frontend & Astryx CLI (Local)
+
+Yêu cầu **Node.js `>= 22.13.0`** khi chạy frontend ở chế độ local:
+
+```bash
+cd frontend
+npm install
+
+# Khởi chạy Vite dev server (http://localhost:5173)
+npm run dev
+
+# Kiểm tra TypeScript & build production
+npm run build
+
+# Kiểm tra cấu hình Astryx Design System
+npm run astryx -- doctor
+
+# Tra cứu tài liệu component của Astryx (VD: Button, Dialog, Table)
+npm run astryx -- component Button
+```
+
+> Tài liệu hướng dẫn sử dụng Astryx dành cho AI coding agents được sinh tự động tại `frontend/AGENTS.md`.
 
 ---
 

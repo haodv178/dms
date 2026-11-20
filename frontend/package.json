@@ -6,25 +6,29 @@
   "scripts": {
     "dev": "vite --port 5173",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "astryx": "astryx"
   },
   "dependencies": {
+    "@astryxdesign/core": "^0.7.16",
+    "@astryxdesign/theme-neutral": "latest",
+    "@stylexjs/stylex": "latest",
     "axios": "^1.7.7",
     "leaflet": "^1.9.4",
-    "lucide-react": "^0.454.0",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "react-leaflet": "^4.2.1"
+    "lucide-react": "^1.77.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-leaflet": "^5.0.0"
   },
   "devDependencies": {
+    "@astryxdesign/cli": "latest",
+    "@tailwindcss/vite": "^4.0.0",
     "@types/leaflet": "^1.9.12",
-    "@types/react": "^18.3.12",
-    "@types/react-dom": "^18.3.1",
-    "@vitejs/plugin-react": "^4.3.3",
-    "autoprefixer": "^10.4.20",
-    "postcss": "^8.4.47",
-    "tailwindcss": "^3.4.14",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "tailwindcss": "^4.0.0",
     "typescript": "^5.6.3",
-    "vite": "^5.4.10"
+    "vite": "^6.0.0"
   }
 }

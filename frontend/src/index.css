@@ -1,8 +1,21 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@layer reset, theme, base, astryx-base, astryx-theme, components, utilities;
+
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/preflight.css" layer(base);
+@import "@astryxdesign/core/reset.css";
+@import "@astryxdesign/core/astryx.css";
+@import "@astryxdesign/theme-neutral/theme.css";
+@import "@astryxdesign/core/tailwind-theme.css";
+@import "tailwindcss/utilities.css" layer(utilities);
 
 .leaflet-div-icon {
   background: transparent !important;
   border: none !important;
+}
+
+.leaflet-popup-content-wrapper,
+.leaflet-popup-tip {
+  background: var(--color-background-surface, #ffffff);
+  color: var(--color-text-primary, #111827);
+  border: 1px solid var(--color-border-primary, rgba(0, 0, 0, 0.1));
 }
