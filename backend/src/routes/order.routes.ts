@@ -8,6 +8,7 @@ import {
   completePacking,
   completeDelivery,
   failDelivery,
+  assignDriverToOrder,
 } from '../controllers/order.controller';
 
 const router = Router();
@@ -20,5 +21,6 @@ router.patch('/:id/start-picking', startPicking);
 router.patch('/:id/complete-packing', completePacking);
 router.patch('/:id/complete-delivery', completeDelivery);
 router.patch('/:id/fail-delivery', failDelivery);
+router.patch('/:id/assign-driver', assignDriverToOrder);
 
 export default router;

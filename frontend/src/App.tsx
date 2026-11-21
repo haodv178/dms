@@ -4,6 +4,7 @@ import { useToast } from '@astryxdesign/core/Toast';
 import { Theme } from '@astryxdesign/core/theme';
 import { defaultThemeSlug, themes } from './astryx-themes';
 import {
+  assignDriverToOrder,
   completeDeliveryOrder,
   completePackingOrder,
   createDriver,
@@ -24,6 +25,7 @@ import {
   updateProduct,
 } from './api/dmsApi';
 import { ActiveTripPanel } from './components/ActiveTripPanel';
+import { AssignDriverModal } from './components/AssignDriverModal';
 import { DriverFormModal } from './components/DriverFormModal';
 import { DriverManagementPage } from './components/DriverManagementPage';
 import { Header } from './components/Header';
@@ -132,7 +134,10 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
 
   const [drivers, setDrivers] = useState<Driver[]>([]);
   const [availableDrivers, setAvailableDrivers] = useState<Driver[]>([]);
+  const [assignableDrivers, setAssignableDrivers] = useState<Driver[]>([]);
   const [selectedDriverId, setSelectedDriverId] = useState<string>('AUTO');
+  const [assigningOrder, setAssigningOrder] = useState<Order | null>(null);
+  const [savingAssignment, setSavingAssignment] = useState<boolean>(false);
   const [driverPagination, setDriverPagination] = useState<DriverPagination>({
     page: 1,
     limit: 20,
@@ -257,12 +262,15 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
 
   const loadAvailableDrivers = useCallback(async () => {
     try {
-      const res = await fetchDrivers({ availableOnly: true, page: 1, limit: 50 });
-      setAvailableDrivers(res.items);
+      const res = await fetchDrivers({ activeOnly: true, page: 1, limit: 100 });
+      const eligible = res.items.filter((d) => d.isActive && d.status !== 'OFFLINE');
+      const available = eligible.filter((d) => d.status === 'AVAILABLE');
+      setAssignableDrivers(eligible);
+      setAvailableDrivers(available);
       setDriverSummary(res.summary);
       setSelectedDriverId((prev) => {
         if (prev === 'AUTO') return prev;
-        return res.items.some((d) => String(d.id) === prev) ? prev : 'AUTO';
+        return available.some((d) => String(d.id) === prev) ? prev : 'AUTO';
       });
     } catch {
       // Ignore secondary driver fetch error
@@ -402,6 +410,40 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
       await Promise.all([loadAllData(), loadDriversPage()]);
     } catch (err) {
       notify(getErrorMessage(err), 'error');
+    }
+  };
+
+  const handleOpenAssignDriver = (order: Order) => {
+    setAssigningOrder(order);
+    void loadAvailableDrivers();
+  };
+
+  const handleAssignDriver = async (orderId: number, driverId: number) => {
+    setSavingAssignment(true);
+    try {
+      const { message } = await assignDriverToOrder(orderId, driverId);
+      notify(message, 'info');
+      setAssigningOrder(null);
+      setSelectedOrderIds((prev) => prev.filter((id) => id !== orderId));
+      await Promise.all([loadAllData(), loadDriversPage()]);
+    } catch (err) {
+      notify(getErrorMessage(err), 'error');
+    } finally {
+      setSavingAssignment(false);
+    }
+  };
+
+  const handleUnassignDriver = async (orderId: number) => {
+    setSavingAssignment(true);
+    try {
+      const { message } = await assignDriverToOrder(orderId, null);
+      notify(message, 'info');
+      setAssigningOrder(null);
+      await Promise.all([loadAllData(), loadDriversPage()]);
+    } catch (err) {
+      notify(getErrorMessage(err), 'error');
+    } finally {
+      setSavingAssignment(false);
     }
   };
 
@@ -829,6 +871,7 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
             onBatchPreparePacked={handleBatchPreparePacked}
             onOptimizeRoute={handleOptimizeRoute}
             onEditOrder={handleOpenEditOrder}
+            onOpenAssignDriver={handleOpenAssignDriver}
             onStartPicking={handleStartPicking}
             onCompletePacking={handleCompletePacking}
             onCompleteDelivery={handleCompleteDelivery}
@@ -946,6 +989,20 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
         onFormChange={setDriverForm}
         submitting={savingDriver}
         onSubmit={handleSubmitDriver}
+      />
+
+      <AssignDriverModal
+        isOpen={Boolean(assigningOrder)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setAssigningOrder(null);
+          }
+        }}
+        order={assigningOrder}
+        drivers={assignableDrivers}
+        submitting={savingAssignment}
+        onAssign={handleAssignDriver}
+        onUnassign={handleUnassignDriver}
       />
     </div>
   );

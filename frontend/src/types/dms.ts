@@ -44,11 +44,19 @@ export interface Store {
   longitude: number;
 }
 
+export interface UserDriverProfileSummary {
+  phone: string;
+  vehicleType: string;
+  licensePlate: string;
+  status: DriverStatus;
+}
+
 export interface User {
   id: number;
   email: string;
   name: string;
   role: Role;
+  driverProfile?: UserDriverProfileSummary | null;
 }
 
 export interface Trip {
@@ -106,11 +114,25 @@ export const EDITABLE_ORDER_STATUSES: readonly OrderStatus[] = [
   'PACKED',
 ] as const;
 
+export const ASSIGNABLE_ORDER_STATUSES: readonly OrderStatus[] = [
+  'PACKED',
+  'DELIVERING',
+  'FAILED',
+] as const;
+
 export function isOrderEditable(status: OrderStatus): boolean {
   return EDITABLE_ORDER_STATUSES.includes(status);
 }
 
+export function isOrderAssignable(status: OrderStatus): boolean {
+  return ASSIGNABLE_ORDER_STATUSES.includes(status);
+}
+
 export function canRoleEditOrders(role: Role): boolean {
+  return role === 'ADMIN' || role === 'WAREHOUSE';
+}
+
+export function canRoleAssignDriver(role: Role): boolean {
   return role === 'ADMIN' || role === 'WAREHOUSE';
 }
 
@@ -243,6 +265,7 @@ export const STATUS_TABS = [
   { key: 'PACKED', label: 'Đã đóng gói (Packed)' },
   { key: 'DELIVERING', label: 'Đang giao (Delivering)' },
   { key: 'COMPLETED', label: 'Hoàn thành (Completed)' },
+  { key: 'FAILED', label: 'Thất bại (Failed)' },
 ] as const;
 
 export interface Product {

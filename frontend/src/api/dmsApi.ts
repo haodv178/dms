@@ -60,6 +60,19 @@ export async function failDeliveryOrder(orderId: number): Promise<void> {
   await axios.patch(`${API_BASE}/orders/${orderId}/fail-delivery`);
 }
 
+export async function assignDriverToOrder(
+  orderId: number,
+  driverId: number | null
+): Promise<{ order: Order; message: string }> {
+  const res = await axios.patch(`${API_BASE}/orders/${orderId}/assign-driver`, {
+    driverId,
+  });
+  return {
+    order: res.data.data as Order,
+    message: (res.data?.message as string) || 'Cập nhật tài xế cho đơn hàng thành công!',
+  };
+}
+
 export async function optimizeTripRoute(
   storeId: number,
   orderIds: number[],

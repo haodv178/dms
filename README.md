@@ -98,7 +98,7 @@ doan/
 │       ├── controllers/
 │       │   ├── auth.controller.ts    # Login, Me, System Overview, Seed API
 │       │   ├── driver.controller.ts  # CRUD tài xế (User + DriverProfile), lọc trạng thái/loại xe & phân trang server
-│       │   ├── order.controller.ts   # Tạo/sửa đơn hàng (chọn từ danh mục), chuyển trạng thái & tự giải phóng tài xế
+│       │   ├── order.controller.ts   # Tạo/sửa đơn hàng, chuyển trạng thái, gán/đổi/bỏ gán tài xế trực tiếp & tự giải phóng tài xế
 │       │   ├── product.controller.ts # CRUD sản phẩm, thống kê KPI & phân trang phía server
 │       │   └── trip.controller.ts    # Gọi Python OR-Tools Solver, gán tài xế & chuyển trạng thái ON_DELIVERY
 │       └── routes/
@@ -129,8 +129,9 @@ doan/
         │   └── dmsApi.ts        # Axios client gọi REST API Backend (Orders, Trips, Products, Drivers)
         └── components/
             ├── Header.tsx                # Top Bar: Chuyển trang Đơn hàng/Sản phẩm/Tài xế, Role, Theme, Seed/New
-            ├── OrderTable.tsx            # Action banner OR-Tools (kèm chọn tài xế), TabList lọc trạng thái & bảng đơn
+            ├── OrderTable.tsx            # Action banner OR-Tools, TabList lọc trạng thái (gồm FAILED), cột Tài xế & bảng đơn
             ├── OrderFormModal.tsx        # Hộp thoại Tạo/Sửa đơn hàng: Mini-map Leaflet + chọn sản phẩm danh mục
+            ├── AssignDriverModal.tsx     # Hộp thoại Astryx Dialog gán/đổi/bỏ gán tài xế trực tiếp cho từng đơn hàng
             ├── RouteMap.tsx              # Bản đồ Leaflet OSM / CARTO Dark Matter theo theme
             ├── ActiveTripPanel.tsx       # Chi tiết chuyến xe & danh sách điểm dừng tối ưu
             ├── ProductManagementPage.tsx # Trang Quản lý Sản phẩm: KPI, tìm kiếm, lọc danh mục & phân trang server
@@ -150,9 +151,11 @@ stateDiagram-v2
     [*] --> NEW: Đơn hàng mới (Form Web / Seed)
     NEW --> PICKING: Nhân viên kho bấm "Bắt đầu nhặt hàng"
     PICKING --> PACKED: Nhân viên kho bấm "Đóng gói xong"
-    PACKED --> DELIVERING: Điều phối bấm "Tối ưu OR-Tools & Gán xe"
+    PACKED --> DELIVERING: Điều phối chạy OR-Tools hoặc bấm "Gán tài xế" trực tiếp
+    DELIVERING --> PACKED: Điều phối/Kho bấm "Bỏ gán tài xế"
     DELIVERING --> COMPLETED: Tài xế bấm "Giao thành công"
     DELIVERING --> FAILED: Tài xế bấm "Giao thất bại"
+    FAILED --> DELIVERING: Điều phối/Kho bấm "Giao lại" (gán tài xế mới)
     COMPLETED --> [*]
     FAILED --> [*]
 ```
@@ -164,9 +167,9 @@ stateDiagram-v2
 | **`NEW`** | Mới tạo | Khách / Admin | Tạo đơn qua form hoặc bấm nút `"Seed 10 Sample Orders"` |
 | **`PICKING`** | Đang nhặt hàng | Nhân viên Kho (`WAREHOUSE`) | Nhân viên kho nhận đơn và đi lấy hàng trong kho/siêu thị |
 | **`PACKED`** | Đã đóng gói | Nhân viên Kho (`WAREHOUSE`) | Kiểm tra hàng, đóng vào túi/thùng, sẵn sàng chờ điều phối giao |
-| **`DELIVERING`**| Đang giao hàng | Điều phối viên (`ADMIN`) | Chọn các đơn `PACKED`, chạy Google OR-Tools và gán chuyến cho tài xế |
+| **`DELIVERING`**| Đang giao hàng | Điều phối viên (`ADMIN`) / Kho (`WAREHOUSE`) | Chạy Google OR-Tools cho nhiều đơn `PACKED` hoặc gán/đổi tài xế trực tiếp cho từng đơn (`PACKED` / `DELIVERING` / `FAILED`); có thể bỏ gán để đưa đơn về `PACKED` |
 | **`COMPLETED`** | Giao thành công | Tài xế (`DRIVER`) | Tài xế đến địa chỉ khách hàng theo thứ tự điểm dừng và xác nhận hoàn tất |
-| **`FAILED`** | Giao thất bại | Tài xế (`DRIVER`) | Khách không nhận hàng hoặc không liên lạc được |
+| **`FAILED`** | Giao thất bại | Tài xế (`DRIVER`) | Khách không nhận hàng hoặc không liên lạc được (có thể gán lại tài xế để giao lại) |
 
 ---
 
@@ -324,6 +327,10 @@ model Product {
 - `PUT /api/orders/:id`: Chỉnh sửa đơn hàng (chỉ cho phép ở các trạng thái trước điều phối: `NEW`, `PICKING`, `PACKED`; trả về `400` nếu đơn đã `DELIVERING`, `COMPLETED` hoặc `FAILED`). Cập nhật thông tin khách hàng, tọa độ GPS và danh sách `OrderItem` (giữ nguyên `status`, tự tính lại `totalAmount`).
 - `PATCH /api/orders/:id/start-picking`: Chuyển trạng thái đơn từ `NEW` ➔ `PICKING`.
 - `PATCH /api/orders/:id/complete-packing`: Chuyển trạng thái đơn từ `PICKING` ➔ `PACKED`.
+- `PATCH /api/orders/:id/assign-driver`: Gán, đổi hoặc bỏ gán tài xế trực tiếp cho một đơn hàng (chạy trong Prisma transaction):
+  - **Gán / Đổi tài xế (`{ "driverId": 3 }`):** Hỗ trợ đơn ở trạng thái `PACKED`, `DELIVERING`, hoặc `FAILED` (giao lại). Chỉ chấp nhận tài xế đang hoạt động (`isActive: true`) và không ở trạng thái `OFFLINE`. Tự động ghép đơn vào chuyến đang hoạt động (`ASSIGNED`/`IN_TRANSIT`) của tài xế ở cuối lộ trình (`max(deliverySequence) + 1`) hoặc tạo `Trip` mới, chuyển đơn sang `DELIVERING` và cập nhật tài xế sang `ON_DELIVERY`.
+  - **Bỏ gán tài xế (`{ "driverId": null }`):** Hỗ trợ đơn đang `DELIVERING`; gỡ `tripId`/`deliverySequence` và đưa đơn về `PACKED`.
+  - **Đồng bộ chuyến cũ:** Khi đổi hoặc bỏ gán tài xế, hệ thống tự đánh lại số thứ tự `1..N` cho các điểm dừng còn lại của chuyến cũ, xóa `totalDistance` cũ, tự xóa chuyến rỗng (hoặc đóng `COMPLETED` nếu không còn đơn `DELIVERING`) và chuyển tài xế cũ về `AVAILABLE` nếu không còn chuyến hoạt động khác.
 
 #### Quản lý Sản phẩm (Product Catalog & Server-Side Pagination)
 - `GET /api/products`: Danh sách sản phẩm hỗ trợ phân trang phía server (`?page=1&limit=20`, giới hạn `1–100`), tìm kiếm theo tên/SKU/danh mục (`?search=`), lọc danh mục (`?category=`), và lọc sản phẩm đang bán (`?activeOnly=true`). Trả về `data`, `pagination` (`page`, `limit`, `total`, `totalPages`) và `summary` (`totalProducts`, `activeProducts`, `lowStockProducts`, `totalStock`).
@@ -405,11 +412,12 @@ Giao diện đơn trang (SPA) tại `http://localhost:5173` được xây dựng
    - **Theme Mode Switcher (`SegmentedControl`):** Chuyển đổi chế độ giao diện **Sáng / Hệ thống / Tối** (lưu trong `localStorage`), tự động đồng bộ toàn bộ token màu Astryx và lớp bản đồ Leaflet.
    - **Tạo đơn mới (`Button` + `Dialog`):** Mở hộp thoại thống nhất cho cả Tạo và Sửa đơn hàng (`OrderFormModal.tsx`).
    - **Seed 10 Sample Orders (`Button`):** Khôi phục/nạp nhanh 10 đơn hàng mẫu ở trạng thái `NEW` để bắt đầu buổi thuyết trình.
-2. **Bảng Điều Phối, Tạo & Chỉnh Sửa Đơn Hàng (`OrderTable.tsx` & `OrderFormModal.tsx`):**
-   - Các tab lọc đơn hàng theo trạng thái (`TabList` / `Tab`) kèm số lượng thực tế và chọn tất cả đơn `PACKED` (`CheckboxInput` hỗ trợ trạng thái `indeterminate`).
+2. **Bảng Điều Phối, Tạo, Chỉnh Sửa & Gán Tài Xế Đơn Hàng (`OrderTable.tsx`, `OrderFormModal.tsx` & `AssignDriverModal.tsx`):**
+   - Các tab lọc đơn hàng theo trạng thái (`TabList` / `Tab`, gồm cả tab `FAILED`) kèm số lượng thực tế và chọn tất cả đơn `PACKED` (`CheckboxInput` hỗ trợ trạng thái `indeterminate`).
    - Nút tiện ích **"Đóng gói nhanh"** giúp chuyển nhanh các đơn `NEW`/`PICKING` sang `PACKED` khi muốn demo ngay thuật toán OR-Tools.
    - Bộ chọn **Tài xế giao hàng (`Selector`)** hiển thị danh sách tài xế đang sẵn sàng (`AVAILABLE`) kèm loại xe & biển số (hoặc tự động chọn) ngay cạnh nút **"Tối ưu hóa lộ trình với Google OR-Tools"**.
-   - Bảng đơn hàng (`Table`, `Badge`, `Button`, `IconButton`) với nút **Chỉnh sửa đơn hàng** (hiện cho `ADMIN` và `WAREHOUSE` với các đơn ở trạng thái `NEW`, `PICKING`, `PACKED`; ẩn với `DRIVER`) cùng các nút chuyển trạng thái và thông báo `useToast()`.
+   - Bảng đơn hàng (`Table`, `Badge`, `Button`, `IconButton`) có thêm cột **Tài Xế** hiển thị tài xế đang phụ trách cùng nút **Gán tài xế / Đổi tài xế / Giao lại** (cho phép `ADMIN` và `WAREHOUSE` với đơn `PACKED`/`DELIVERING`/`FAILED`; `DRIVER` chỉ xem), nút **Chỉnh sửa đơn hàng** (`NEW`/`PICKING`/`PACKED`) và thông báo `useToast()`.
+   - **Hộp thoại Gán Tài Xế (`AssignDriverModal.tsx`):** Hiển thị tóm tắt đơn hàng, ô tìm kiếm tài xế theo tên/SĐT/biển số/loại xe, danh sách tài xế đủ điều kiện (ưu tiên `AVAILABLE` trước `ON_DELIVERY` kèm số đơn đang giao) và nút **"Bỏ gán tài xế"** khi đơn đang ở trạng thái `DELIVERING`.
    - **Hộp thoại Tạo/Sửa Đơn Hàng (`OrderFormModal.tsx`):**
      - Sử dụng cấu trúc Astryx `Dialog` + `Layout` (`LayoutContent` / `LayoutFooter`) để nút Lưu/Hủy luôn cố định ở chân hộp thoại.
      - **Bản đồ mini Leaflet tương tác:** Click lên bản đồ hoặc kéo ghim xanh để chọn tọa độ giao hàng, đồng bộ 2 chiều với ô nhập `Latitude` / `Longitude`.
@@ -488,6 +496,15 @@ curl "http://localhost:3000/api/products?page=1&limit=20&search=G%E1%BA%A1o"
 
 # 7. Truy vấn danh sách tài xế đang sẵn sàng
 curl "http://localhost:3000/api/drivers?page=1&limit=20&status=AVAILABLE"
+
+# 8. Gán hoặc bỏ gán tài xế trực tiếp cho đơn hàng (PACKED / DELIVERING / FAILED)
+curl -X PATCH http://localhost:3000/api/orders/1/assign-driver \
+  -H "Content-Type: application/json" \
+  -d '{"driverId": 3}'
+
+curl -X PATCH http://localhost:3000/api/orders/1/assign-driver \
+  -H "Content-Type: application/json" \
+  -d '{"driverId": null}'
 ```
 
 #### Nạp nhanh 1.000 sản phẩm mẫu để kiểm thử phân trang:

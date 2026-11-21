@@ -8,6 +8,7 @@ import {
   ShoppingBag,
   Sparkles,
   Truck,
+  UserPlus,
   XCircle,
 } from 'lucide-react';
 import { Badge } from '@astryxdesign/core/Badge';
@@ -17,6 +18,7 @@ import { CheckboxInput } from '@astryxdesign/core/CheckboxInput';
 import { Heading } from '@astryxdesign/core/Heading';
 import { IconButton } from '@astryxdesign/core/IconButton';
 import { Selector } from '@astryxdesign/core/Selector';
+import { Stack } from '@astryxdesign/core/Stack';
 import { Tab, TabList } from '@astryxdesign/core/TabList';
 import {
   Table,
@@ -30,8 +32,10 @@ import { Text } from '@astryxdesign/core/Text';
 import {
   STATUS_CONFIG,
   STATUS_TABS,
+  canRoleAssignDriver,
   canRoleEditOrders,
   formatVND,
+  isOrderAssignable,
   isOrderEditable,
   type Driver,
   type Order,
@@ -56,6 +60,7 @@ interface OrderTableProps {
   onBatchPreparePacked: () => void;
   onOptimizeRoute: () => void;
   onEditOrder: (order: Order) => void;
+  onOpenAssignDriver: (order: Order) => void;
   onStartPicking: (id: number) => void;
   onCompletePacking: (id: number) => void;
   onCompleteDelivery: (id: number) => void;
@@ -80,6 +85,7 @@ export function OrderTable({
   onBatchPreparePacked,
   onOptimizeRoute,
   onEditOrder,
+  onOpenAssignDriver,
   onStartPicking,
   onCompletePacking,
   onCompleteDelivery,
@@ -240,6 +246,7 @@ export function OrderTable({
                     <TableHeaderCell>Khách Hàng &amp; Địa Chỉ</TableHeaderCell>
                     <TableHeaderCell>Tổng Tiền</TableHeaderCell>
                     <TableHeaderCell>Trạng Thái</TableHeaderCell>
+                    <TableHeaderCell>Tài Xế</TableHeaderCell>
                     <TableHeaderCell>Thao Tác ({role})</TableHeaderCell>
                   </TableRow>
                 </TableHeader>
@@ -326,6 +333,55 @@ export function OrderTable({
                             label={statusMeta.label}
                             variant={statusMeta.badgeVariant}
                           />
+                        </TableCell>
+
+                        <TableCell>
+                          {(() => {
+                            const assignedDriver = order.trip?.driver ?? null;
+                            const canAssign =
+                              canRoleAssignDriver(role) && isOrderAssignable(order.status);
+                            const assignLabel =
+                              order.status === 'FAILED'
+                                ? 'Giao lại'
+                                : assignedDriver
+                                  ? 'Đổi tài xế'
+                                  : 'Gán tài xế';
+
+                            return (
+                              <Stack direction="vertical" gap={1} className="whitespace-nowrap">
+                                {assignedDriver ? (
+                                  <Stack direction="vertical" gap={0.5}>
+                                    <Stack direction="horizontal" align="center" gap={1}>
+                                      <Truck className="w-3.5 h-3.5 text-accent shrink-0" />
+                                      <Text type="label" size="xsm">
+                                        {assignedDriver.name}
+                                      </Text>
+                                    </Stack>
+                                    {assignedDriver.driverProfile?.licensePlate && (
+                                      <Text type="supporting" size="2xs">
+                                        {assignedDriver.driverProfile.vehicleType} •{' '}
+                                        {assignedDriver.driverProfile.licensePlate}
+                                      </Text>
+                                    )}
+                                  </Stack>
+                                ) : (
+                                  <Text type="supporting" size="xsm">
+                                    Chưa gán
+                                  </Text>
+                                )}
+
+                                {canAssign && (
+                                  <Button
+                                    label={assignLabel}
+                                    variant={assignedDriver ? 'secondary' : 'primary'}
+                                    size="sm"
+                                    icon={<UserPlus className="w-3.5 h-3.5" />}
+                                    onClick={() => onOpenAssignDriver(order)}
+                                  />
+                                )}
+                              </Stack>
+                            );
+                          })()}
                         </TableCell>
 
                         <TableCell>
