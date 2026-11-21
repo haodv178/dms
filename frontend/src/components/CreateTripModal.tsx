@@ -66,9 +66,21 @@ export function CreateTripModal({
     return activeStores.find((s) => s.id === id) ?? resolvedDefaultStore;
   }, [selectedStoreId, activeStores, resolvedDefaultStore]);
 
+  const depotPackedOrders = useMemo(
+    () => packedOrders.filter((o) => o.storeId === selectedStore.id),
+    [packedOrders, selectedStore.id]
+  );
+
+  const otherDepotPackedCount = packedOrders.length - depotPackedOrders.length;
+
+  const depotAvailableDrivers = useMemo(
+    () => availableDrivers.filter((d) => d.storeId === selectedStore.id),
+    [availableDrivers, selectedStore.id]
+  );
+
   const orderDistanceMap = useMemo(() => {
     const map = new Map<number, number>();
-    for (const o of packedOrders) {
+    for (const o of depotPackedOrders) {
       map.set(
         o.id,
         haversineDistanceKm(
@@ -80,28 +92,47 @@ export function CreateTripModal({
       );
     }
     return map;
-  }, [packedOrders, selectedStore.latitude, selectedStore.longitude]);
+  }, [depotPackedOrders, selectedStore.latitude, selectedStore.longitude]);
 
   const eligiblePackedOrders = useMemo(
     () =>
-      packedOrders.filter(
+      depotPackedOrders.filter(
         (o) => (orderDistanceMap.get(o.id) ?? Infinity) <= MAX_DELIVERY_DISTANCE_KM
       ),
-    [packedOrders, orderDistanceMap]
+    [depotPackedOrders, orderDistanceMap]
   );
 
-  const outOfRangeCount = packedOrders.length - eligiblePackedOrders.length;
+  const outOfRangeCount = depotPackedOrders.length - eligiblePackedOrders.length;
 
   useEffect(() => {
     if (isOpen) {
-      const defStore = activeStores.find((s) => s.isDefault) ?? activeStores[0] ?? defaultDepot;
-      setSelectedStoreId(String(defStore.id));
+      let initialStore =
+        activeStores.find((s) => s.isDefault) ?? activeStores[0] ?? defaultDepot;
 
-      const isWithin = (o: Order) =>
-        haversineDistanceKm(defStore.latitude, defStore.longitude, o.latitude, o.longitude) <=
-        MAX_DELIVERY_DISTANCE_KM;
+      if (initialSelectedOrderIds && initialSelectedOrderIds.length > 0) {
+        const firstInitialOrder = packedOrders.find((o) =>
+          initialSelectedOrderIds.includes(o.id)
+        );
+        if (firstInitialOrder) {
+          const matchedStore = activeStores.find((s) => s.id === firstInitialOrder.storeId);
+          if (matchedStore) {
+            initialStore = matchedStore;
+          }
+        }
+      }
 
-      const eligibleIds = packedOrders.filter(isWithin).map((o) => o.id);
+      setSelectedStoreId(String(initialStore.id));
+
+      const isEligible = (o: Order) =>
+        o.storeId === initialStore.id &&
+        haversineDistanceKm(
+          initialStore.latitude,
+          initialStore.longitude,
+          o.latitude,
+          o.longitude
+        ) <= MAX_DELIVERY_DISTANCE_KM;
+
+      const eligibleIds = packedOrders.filter(isEligible).map((o) => o.id);
       const eligibleSet = new Set(eligibleIds);
 
       if (initialSelectedOrderIds && initialSelectedOrderIds.length > 0) {
@@ -117,35 +148,35 @@ export function CreateTripModal({
 
   const handleStoreChange = (nextStoreId: string) => {
     setSelectedStoreId(nextStoreId);
+    setSelectedDriverId('AUTO');
     const nextStore =
       activeStores.find((s) => s.id === Number(nextStoreId)) ?? resolvedDefaultStore;
-    setSelectedOrderIds((prev) =>
-      prev.filter((id) => {
-        const order = packedOrders.find((o) => o.id === id);
-        if (!order) return false;
-        return (
+    const nextEligibleIds = packedOrders
+      .filter(
+        (order) =>
+          order.storeId === nextStore.id &&
           haversineDistanceKm(
             nextStore.latitude,
             nextStore.longitude,
             order.latitude,
             order.longitude
           ) <= MAX_DELIVERY_DISTANCE_KM
-        );
-      })
-    );
+      )
+      .map((o) => o.id);
+    setSelectedOrderIds(nextEligibleIds);
   };
 
   const filteredPackedOrders = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return packedOrders;
-    return packedOrders.filter(
+    if (!q) return depotPackedOrders;
+    return depotPackedOrders.filter(
       (o) =>
         o.orderCode.toLowerCase().includes(q) ||
         o.customerName.toLowerCase().includes(q) ||
         o.customerPhone.toLowerCase().includes(q) ||
         o.customerAddress.toLowerCase().includes(q)
     );
-  }, [packedOrders, search]);
+  }, [depotPackedOrders, search]);
 
   const allSelected =
     eligiblePackedOrders.length > 0 && selectedOrderIds.length === eligiblePackedOrders.length;
@@ -198,18 +229,20 @@ export function CreateTripModal({
     {
       value: 'AUTO',
       label:
-        availableDrivers.length > 0
-          ? `Tự động chọn tài xế (${availableDrivers.length} sẵn sàng)`
-          : 'Tự động chọn tài xế',
+        depotAvailableDrivers.length > 0
+          ? `Tự động chọn tài xế cùng depot (${depotAvailableDrivers.length} sẵn sàng)`
+          : 'Tự động chọn tài xế (0 sẵn sàng tại depot này)',
     },
-    ...availableDrivers.map((d) => ({
+    ...depotAvailableDrivers.map((d) => ({
       value: String(d.id),
       label: `${d.name} • ${d.vehicleType} (${d.licensePlate})`,
     })),
   ];
 
+  const hasNoDepotDriver = depotAvailableDrivers.length === 0;
+
   const handleConfirm = async () => {
-    if (selectedOrderIds.length === 0 || hasInvalidSelection) return;
+    if (selectedOrderIds.length === 0 || hasInvalidSelection || hasNoDepotDriver) return;
     const driverId = selectedDriverId !== 'AUTO' ? Number(selectedDriverId) : null;
     await onCreateTrip(selectedStore.id, selectedOrderIds, driverId);
   };
@@ -242,8 +275,8 @@ export function CreateTripModal({
                         Điểm xuất phát (Kho / Depot)
                       </Text>
                       <Text type="supporting" size="2xs">
-                        Chỉ cho phép gán các đơn giao trong bán kính {MAX_DELIVERY_DISTANCE_KM} km
-                        từ điểm xuất phát.
+                        Chỉ cho phép gán các đơn hàng thuộc depot này (trong bán kính{' '}
+                        {MAX_DELIVERY_DISTANCE_KM} km).
                       </Text>
                     </div>
 
@@ -266,7 +299,7 @@ export function CreateTripModal({
                         Tài xế phụ trách chuyến xe
                       </Text>
                       <Text type="supporting" size="2xs">
-                        Để &quot;Tự động&quot; hệ thống sẽ chọn tài xế đang sẵn sàng (AVAILABLE).
+                        Chỉ hiển thị tài xế sẵn sàng (AVAILABLE) thuộc depot &quot;{selectedStore.name}&quot;.
                       </Text>
                     </div>
 
@@ -284,6 +317,17 @@ export function CreateTripModal({
                   </div>
                 </div>
               </Card>
+
+              {hasNoDepotDriver && (
+                <div className="flex items-start gap-2 p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <Text type="supporting" size="2xs">
+                    Depot &quot;<strong>{selectedStore.name}</strong>&quot; hiện không có tài xế nào
+                    đang sẵn sàng (AVAILABLE). Vui lòng thêm tài xế cho depot này hoặc đợi tài xế
+                    hoàn thành chuyến hiện tại.
+                  </Text>
+                </div>
+              )}
 
               {outOfRangeCount > 0 && (
                 <div className="flex items-start gap-2 p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30">
@@ -326,15 +370,16 @@ export function CreateTripModal({
                 </div>
               </div>
 
-              {packedOrders.length === 0 ? (
+              {depotPackedOrders.length === 0 ? (
                 <div className="py-10 px-4 text-center rounded-xl border border-dashed border-border bg-muted flex flex-col items-center gap-2">
                   <Package className="w-8 h-8 text-secondary" />
                   <Text type="label" size="sm">
-                    Hiện chưa có đơn hàng nào ở trạng thái PACKED
+                    Không có đơn hàng PACKED nào thuộc depot &quot;{selectedStore.name}&quot;
                   </Text>
                   <Text type="supporting" size="xsm">
-                    Hãy sang trang Đơn hàng để nhặt hàng &amp; đóng gói (hoặc bấm Đóng gói nhanh)
-                    trước khi tạo chuyến.
+                    {otherDepotPackedCount > 0
+                      ? `Hiện có ${otherDepotPackedCount} đơn PACKED thuộc các depot khác. Hãy đổi điểm xuất phát ở trên để tạo chuyến cho các đơn đó.`
+                      : 'Hãy sang trang Đơn hàng để nhặt hàng & đóng gói (hoặc bấm Đóng gói nhanh) trước khi tạo chuyến.'}
                   </Text>
                 </div>
               ) : filteredPackedOrders.length === 0 ? (
@@ -440,7 +485,9 @@ export function CreateTripModal({
                 size="sm"
                 icon={<Sparkles className="w-4 h-4" />}
                 isLoading={submitting}
-                isDisabled={selectedOrderIds.length === 0 || hasInvalidSelection}
+                isDisabled={
+                  selectedOrderIds.length === 0 || hasInvalidSelection || hasNoDepotDriver
+                }
                 onClick={() => void handleConfirm()}
               />
             </div>

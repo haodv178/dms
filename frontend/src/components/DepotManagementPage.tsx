@@ -428,7 +428,7 @@ export function DepotManagementPage({
                   <TableHeaderCell>Tọa độ GPS</TableHeaderCell>
                   <TableHeaderCell>Liên hệ</TableHeaderCell>
                   <TableHeaderCell>Tồn kho</TableHeaderCell>
-                  <TableHeaderCell>Đơn / Chuyến</TableHeaderCell>
+                  <TableHeaderCell>Đơn / Chuyến / Tài xế</TableHeaderCell>
                   <TableHeaderCell>Trạng thái</TableHeaderCell>
                   <TableHeaderCell>Thao tác</TableHeaderCell>
                 </TableRow>
@@ -465,6 +465,7 @@ export function DepotManagementPage({
                     const isFocusedOnMap = selectedMapStore?.id === store.id;
                     const ordersCount = store.ordersCount ?? 0;
                     const tripsCount = store.tripsCount ?? 0;
+                    const driversCount = store.driversCount ?? 0;
 
                     return (
                       <TableRow key={store.id}>
@@ -545,9 +546,10 @@ export function DepotManagementPage({
                         </TableCell>
 
                         <TableCell>
-                          <div className="flex items-center gap-1.5">
+                          <div className="flex items-center gap-1.5 flex-wrap">
                             <Badge label={`${ordersCount} đơn`} variant="cyan" />
                             <Badge label={`${tripsCount} chuyến`} variant="blue" />
+                            <Badge label={`${driversCount} tài xế`} variant="purple" />
                           </div>
                         </TableCell>
 
@@ -688,12 +690,15 @@ export function DepotManagementPage({
                     ({deletingStore.code})?
                   </Text>
                   {((deletingStore.ordersCount ?? 0) > 0 ||
-                    (deletingStore.tripsCount ?? 0) > 0) && (
+                    (deletingStore.tripsCount ?? 0) > 0 ||
+                    (deletingStore.driversCount ?? 0) > 0) && (
                     <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30">
                       <Text type="supporting" size="xsm">
-                        Điểm xuất phát này đang gắn với {deletingStore.ordersCount ?? 0} đơn hàng
-                        và {deletingStore.tripsCount ?? 0} chuyến xe. Hệ thống sẽ chặn xóa để bảo
-                        toàn lịch sử — bạn nên chuyển sang trạng thái &quot;Ngừng hoạt động&quot;.
+                        Điểm xuất phát này đang gắn với {deletingStore.ordersCount ?? 0} đơn hàng,{' '}
+                        {deletingStore.tripsCount ?? 0} chuyến xe và{' '}
+                        {deletingStore.driversCount ?? 0} tài xế. Hệ thống sẽ chặn xóa để bảo toàn
+                        dữ liệu — bạn hãy chuyển tài xế sang depot khác hoặc chuyển sang trạng thái
+                        &quot;Ngừng hoạt động&quot;.
                       </Text>
                     </div>
                   )}

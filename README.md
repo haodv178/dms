@@ -83,12 +83,13 @@ doan/
 ├── README.md                    # Tài liệu tổng hợp toàn dự án
 ├── backend/                     # Node.js Monolithic Backend (:3000)
 │   ├── Dockerfile               # Docker image cho Backend
-│   ├── docker-entrypoint.sh     # Tự động migrate dữ liệu tồn kho cũ, đồng bộ Prisma schema & khởi chạy server
+│   ├── docker-entrypoint.sh     # Tự động migrate dữ liệu tồn kho & depot tài xế cũ, đồng bộ Prisma schema & khởi chạy server
 │   ├── package.json
 │   ├── tsconfig.json
 │   ├── prisma/
-│   │   ├── schema.prisma        # Định nghĩa 8 bảng dữ liệu PostgreSQL (gồm Product, DepotStock & DriverProfile)
+│   │   ├── schema.prisma        # Định nghĩa 8 bảng dữ liệu PostgreSQL (gồm Product, DepotStock & DriverProfile gắn 1 Store)
 │   │   ├── migrate-depot-stocks.sql # Migration idempotent chuyển Product.stock cũ sang bảng DepotStock (Depot mặc định)
+│   │   ├── migrate-driver-depots.sql # Migration idempotent gán DriverProfile.storeId cũ sang Depot mặc định
 │   │   ├── seed.ts              # Script nạp dữ liệu mẫu qua CLI
 │   │   └── seed-1000-products.ts # Script sinh 1.000 sản phẩm mẫu kèm tồn kho theo từng depot
 │   └── src/
@@ -97,14 +98,14 @@ doan/
 │       │   ├── geo.ts           # Tính khoảng cách Haversine & kiểm tra bán kính giao hàng tối đa 5 km
 │       │   ├── inventory.ts     # Helper trừ/hoàn tồn kho atomic theo từng depot (chống âm kho)
 │       │   ├── prisma.ts        # Khởi tạo Prisma Client
-│       │   └── seeder.ts        # Logic tạo Kho mặc định (Depot), Users, 5 Tài xế, 16 Sản phẩm (kèm DepotStock) & 10 Đơn hàng mẫu
+│       │   └── seeder.ts        # Logic tạo Kho mặc định (Depot), Users, 5 Tài xế (thuộc Depot mặc định), 16 Sản phẩm (kèm DepotStock) & 10 Đơn hàng mẫu
 │       ├── controllers/
 │       │   ├── auth.controller.ts    # Login, Me, System Overview, Seed API
-│       │   ├── driver.controller.ts  # CRUD tài xế (User + DriverProfile), lọc trạng thái/loại xe & phân trang server
-│       │   ├── order.controller.ts   # Tạo/sửa đơn hàng (chọn depot, chặn > 5 km, trừ/hoàn tồn kho theo depot), chuyển trạng thái, gán tài xế & bulk-action
+│       │   ├── driver.controller.ts  # CRUD tài xế (User + DriverProfile bắt buộc 1 depot), lọc depot/trạng thái/loại xe & phân trang server
+│       │   ├── order.controller.ts   # Tạo/sửa đơn hàng (chọn depot, chặn > 5 km, trừ/hoàn tồn kho theo depot), chuyển trạng thái, gán tài xế cùng depot & bulk-action
 │       │   ├── product.controller.ts # CRUD sản phẩm kèm tồn kho theo từng depot, lọc depot/danh mục, KPI & phân trang server
-│       │   ├── store.controller.ts   # CRUD điểm xuất phát (Multi-depot), đặt kho mặc định, thống kê đơn/chuyến/tồn kho & API tồn kho từng depot
-│       │   └── trip.controller.ts    # Tối ưu/tạo chuyến OR-Tools (chặn cứng đơn > 5 km từ điểm xuất phát), xuất phát (IN_TRANSIT), đổi tài xế, tối ưu lại & hủy chuyến
+│       │   ├── store.controller.ts   # CRUD điểm xuất phát (Multi-depot), đặt kho mặc định, thống kê đơn/chuyến/tài xế/tồn kho & API tồn kho từng depot
+│       │   └── trip.controller.ts    # Tối ưu/tạo chuyến OR-Tools (ràng buộc cùng depot & ≤ 5 km), xuất phát (IN_TRANSIT), đổi tài xế cùng depot, tối ưu lại & hủy chuyến
 │       └── routes/
 │           ├── auth.routes.ts
 │           ├── driver.routes.ts
@@ -136,17 +137,17 @@ doan/
             ├── Header.tsx                  # Top Bar: Chuyển trang Đơn hàng/Chuyến xe/Sản phẩm/Tài xế/Điểm xuất phát, Role, Theme, Seed/New
             ├── OrderTable.tsx              # Trang chủ full-width: Bảng đơn hàng sắp xếp createdAt DESC (kèm tên kho xuất phát), thao tác hàng loạt theo vai trò, tìm kiếm & lọc trạng thái
             ├── OrderFormModal.tsx          # Hộp thoại Tạo/Sửa đơn hàng: Chọn depot, mini-map 5 km, hiển thị tồn kho thực tế tại depot & chặn vượt tồn kho
-            ├── AssignDriverModal.tsx       # Hộp thoại Astryx Dialog gán/đổi/bỏ gán tài xế trực tiếp cho từng đơn hàng
-            ├── BulkAssignDriverModal.tsx   # Hộp thoại Astryx Dialog gán tài xế hàng loạt cho nhiều đơn đủ điều kiện
+            ├── AssignDriverModal.tsx       # Hộp thoại Astryx Dialog gán/đổi/bỏ gán tài xế trực tiếp (chỉ lọc tài xế cùng depot với đơn hàng)
+            ├── BulkAssignDriverModal.tsx   # Hộp thoại Astryx Dialog gán tài xế hàng loạt (lọc theo depot, cảnh báo & tự bỏ qua đơn khác depot)
             ├── TripManagementPage.tsx      # Trang Quản lý Chuyến xe: KPI, master-detail danh sách chuyến (kèm điểm xuất phát), RouteMap & thao tác vòng đời chuyến
-            ├── CreateTripModal.tsx         # Hộp thoại chọn điểm xuất phát, tài xế & đơn PACKED trong bán kính 5 km để tối ưu/tạo chuyến bằng Google OR-Tools
-            ├── ReassignTripDriverModal.tsx # Hộp thoại đổi tài xế phụ trách cho chuyến xe đang hoạt động
+            ├── CreateTripModal.tsx         # Hộp thoại chọn depot, tài xế cùng depot & đơn PACKED thuộc đúng depot (≤ 5 km) để tối ưu/tạo chuyến bằng Google OR-Tools
+            ├── ReassignTripDriverModal.tsx # Hộp thoại đổi tài xế phụ trách cùng depot cho chuyến xe đang hoạt động
             ├── RouteMap.tsx                # Bản đồ Leaflet OSM / CARTO Dark Matter hiển thị lộ trình chuyến đang chọn
             ├── ProductManagementPage.tsx   # Trang Quản lý Sản phẩm: KPI, bộ lọc theo Depot/danh mục, phân bổ tồn kho từng depot & phân trang server
             ├── ProductFormModal.tsx        # Hộp thoại Astryx Dialog thêm/sửa sản phẩm kèm nhập tồn kho riêng cho từng depot
-            ├── DriverManagementPage.tsx    # Trang Quản lý Tài xế: KPI, tìm kiếm, lọc trạng thái/loại xe & phân trang server
-            ├── DriverFormModal.tsx         # Hộp thoại Astryx Dialog thêm/sửa tài khoản & phương tiện tài xế
-            ├── DepotManagementPage.tsx     # Trang Quản lý Điểm xuất phát: KPI, bản đồ tổng quan 5 km, cột tồn kho từng depot, bảng CRUD & phân trang server
+            ├── DriverManagementPage.tsx    # Trang Quản lý Tài xế: KPI, cột Depot, tìm kiếm, lọc depot/trạng thái/loại xe & phân trang server
+            ├── DriverFormModal.tsx         # Hộp thoại Astryx Dialog thêm/sửa tài xế (bắt buộc chọn Depot phụ trách, khóa đổi depot khi có chuyến hoạt động)
+            ├── DepotManagementPage.tsx     # Trang Quản lý Điểm xuất phát: KPI, bản đồ tổng quan 5 km, cột tồn kho & đếm đơn/chuyến/tài xế, bảng CRUD & phân trang server
             ├── DepotInventoryModal.tsx     # Hộp thoại xem, tìm kiếm & cập nhật nhanh số lượng tồn kho sản phẩm tại riêng một depot
             └── DepotFormModal.tsx          # Hộp thoại Astryx Dialog thêm/sửa điểm xuất phát kèm bản đồ Leaflet chọn tọa độ & vùng phủ 5 km
 ```
@@ -234,6 +235,8 @@ model DriverProfile {
   id           Int          @id @default(autoincrement())
   userId       Int          @unique
   user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  storeId      Int          // Depot phụ trách bắt buộc (mỗi tài xế thuộc về 1 depot)
+  store        Store        @relation(fields: [storeId], references: [id])
   phone        String
   vehicleType  String       @default("Xe máy")
   licensePlate String
@@ -242,24 +245,27 @@ model DriverProfile {
   notes        String?
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
+
+  @@index([storeId])
 }
 
 model Store {
-  id          Int          @id @default(autoincrement())
-  code        String?      @unique
+  id          Int             @id @default(autoincrement())
+  code        String?         @unique
   name        String
   address     String
-  latitude    Float        // Điểm xuất phát (Depot / Kho hàng) cho thuật toán VRP
+  latitude    Float           // Điểm xuất phát (Depot / Kho hàng) cho thuật toán VRP
   longitude   Float
-  phone       String       @default("")
-  isDefault   Boolean      @default(false)
-  isActive    Boolean      @default(true)
+  phone       String          @default("")
+  isDefault   Boolean         @default(false)
+  isActive    Boolean         @default(true)
   notes       String?
   orders      Order[]
   trips       Trip[]
   depotStocks DepotStock[]
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @default(now()) @updatedAt
+  drivers     DriverProfile[]
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @default(now()) @updatedAt
 }
 
 model Order {
@@ -361,11 +367,11 @@ model DepotStock {
 - `PATCH /api/orders/:id/start-picking`: Chuyển trạng thái đơn từ `NEW` ➔ `PICKING`.
 - `PATCH /api/orders/:id/complete-packing`: Chuyển trạng thái đơn từ `PICKING` ➔ `PACKED`.
 - `PATCH /api/orders/:id/assign-driver`: Gán, đổi hoặc bỏ gán tài xế trực tiếp cho một đơn hàng (chạy trong Prisma transaction):
-  - **Gán / Đổi tài xế (`{ "driverId": 3 }`):** Hỗ trợ đơn ở trạng thái `PACKED`, `DELIVERING`, hoặc `FAILED` (giao lại — tự động kiểm tra và trừ lại tồn kho tại depot của đơn). Chỉ chấp nhận tài xế đang hoạt động (`isActive: true`) và không ở trạng thái `OFFLINE`. Tự động ghép đơn vào chuyến đang hoạt động (`ASSIGNED`/`IN_TRANSIT`) của tài xế ở cuối lộ trình (`max(deliverySequence) + 1`) hoặc tạo `Trip` mới, chuyển đơn sang `DELIVERING` và cập nhật tài xế sang `ON_DELIVERY`.
+  - **Gán / Đổi tài xế (`{ "driverId": 3 }`):** Hỗ trợ đơn ở trạng thái `PACKED`, `DELIVERING`, hoặc `FAILED` (giao lại — tự động kiểm tra và trừ lại tồn kho tại depot của đơn). Chỉ chấp nhận tài xế đang hoạt động (`isActive: true`), không ở trạng thái `OFFLINE`, và **thuộc đúng depot của đơn hàng (`driverProfile.storeId === order.storeId`, trả `400` nếu lệch depot)**. Tự động ghép đơn vào chuyến đang hoạt động (`ASSIGNED`/`IN_TRANSIT`) cùng depot của tài xế ở cuối lộ trình (`max(deliverySequence) + 1`) hoặc tạo `Trip` mới, chuyển đơn sang `DELIVERING` và cập nhật tài xế sang `ON_DELIVERY`.
   - **Bỏ gán tài xế (`{ "driverId": null }`):** Hỗ trợ đơn đang `DELIVERING`; gỡ `tripId`/`deliverySequence` và đưa đơn về `PACKED`.
   - **Đồng bộ chuyến cũ:** Khi đổi hoặc bỏ gán tài xế, hệ thống tự đánh lại số thứ tự `1..N` cho các điểm dừng còn lại của chuyến cũ, xóa `totalDistance` cũ, tự xóa chuyến rỗng (hoặc đóng `COMPLETED` nếu không còn đơn `DELIVERING`) và chuyển tài xế cũ về `AVAILABLE` nếu không còn chuyến hoạt động khác.
 - `POST /api/orders/bulk-action`: Thực hiện **thao tác hàng loạt** trên danh sách đơn hàng (`{ "action": "...", "orderIds": [1, 2, 3], "driverId"?: 3 }`) trong một Prisma transaction:
-  - **Các thao tác hỗ trợ:** `START_PICKING` (`NEW` ➔ `PICKING`), `COMPLETE_PACKING` (`PICKING` ➔ `PACKED`), `ASSIGN_DRIVER` (`PACKED`/`DELIVERING`/`FAILED` ➔ `DELIVERING`, tự trừ lại tồn kho với đơn `FAILED`), `UNASSIGN_DRIVER` (`DELIVERING` ➔ `PACKED`), `COMPLETE_DELIVERY` (`DELIVERING` ➔ `COMPLETED`), và `FAIL_DELIVERY` (`DELIVERING` ➔ `FAILED`, tự hoàn tồn kho về depot).
+  - **Các thao tác hỗ trợ:** `START_PICKING` (`NEW` ➔ `PICKING`), `COMPLETE_PACKING` (`PICKING` ➔ `PACKED`), `ASSIGN_DRIVER` (`PACKED`/`DELIVERING`/`FAILED` ➔ `DELIVERING`, chỉ gán các đơn có `storeId` trùng với depot của tài xế và tự trừ lại tồn kho với đơn `FAILED`; các đơn thuộc depot khác tự động đưa vào danh sách `skipped` kèm lý do), `UNASSIGN_DRIVER` (`DELIVERING` ➔ `PACKED`), `COMPLETE_DELIVERY` (`DELIVERING` ➔ `COMPLETED`), và `FAIL_DELIVERY` (`DELIVERING` ➔ `FAILED`, tự hoàn tồn kho về depot).
   - **Kiểm tra điều kiện & đồng bộ:** Kiểm tra trạng thái hợp lệ cho từng đơn phía server, tự động cập nhật tất cả đơn đủ điều kiện, đồng bộ trạng thái/thứ tự điểm dừng của các `Trip` và trạng thái `DriverProfile` liên quan một lần, đồng thời trả về `{ updatedCount, updatedOrders, skipped: [{ id, orderCode, reason }], message }`.
 
 #### Quản lý Sản phẩm & Tồn kho theo Depot (Product Catalog & Per-Depot Inventory)
@@ -376,35 +382,35 @@ model DepotStock {
 - `DELETE /api/products/:id`: Xóa sản phẩm khỏi danh mục (cascade xóa các bản ghi `DepotStock`).
 
 #### Quản lý Tài xế (Driver Management & Fleet Status)
-- `GET /api/drivers`: Danh sách tài xế (gộp thông tin `User` + `DriverProfile` + chuyến đang chạy `activeTrip` + `totalTrips`), hỗ trợ phân trang phía server (`?page=1&limit=20`), tìm kiếm theo tên/email/SĐT/biển số (`?search=`), lọc trạng thái (`?status=AVAILABLE|ON_DELIVERY|OFFLINE`), lọc loại xe (`?vehicleType=`), và lọc nhanh tài xế sẵn sàng (`?availableOnly=true`). Trả về `data`, `pagination` và `summary` (`totalDrivers`, `availableDrivers`, `onDeliveryDrivers`, `inactiveDrivers`).
-- `GET /api/drivers/:id`: Xem chi tiết một tài xế.
-- `POST /api/drivers`: Tạo tài khoản tài xế (`role: DRIVER`, mật khẩu mặc định `123` nếu bỏ trống) cùng bản ghi `DriverProfile` (`phone`, `vehicleType`, `licensePlate`, `status`, `isActive`, `notes`), kiểm tra trùng email với mã lỗi `409`.
-- `PUT /api/drivers/:id`: Cập nhật thông tin tài khoản, mật khẩu tùy chọn, phương tiện, trạng thái vận hành và cờ hoạt động `isActive`.
+- `GET /api/drivers`: Danh sách tài xế (gộp thông tin `User` + `DriverProfile` + thông tin depot `storeId`/`store` + chuyến đang chạy `activeTrip` + `totalTrips`), hỗ trợ phân trang phía server (`?page=1&limit=20`), tìm kiếm theo tên/email/SĐT/biển số (`?search=`), lọc theo depot (`?storeId=1`), lọc trạng thái (`?status=AVAILABLE|ON_DELIVERY|OFFLINE`), lọc loại xe (`?vehicleType=`), và lọc nhanh tài xế sẵn sàng (`?availableOnly=true`). Trả về `data`, `pagination` và `summary` (`totalDrivers`, `availableDrivers`, `onDeliveryDrivers`, `inactiveDrivers`).
+- `GET /api/drivers/:id`: Xem chi tiết một tài xế (kèm thông tin depot).
+- `POST /api/drivers`: Tạo tài khoản tài xế (`role: DRIVER`, mật khẩu mặc định `123` nếu bỏ trống) cùng bản ghi `DriverProfile` (**bắt buộc `storeId`** thuộc depot đang hoạt động, kèm `phone`, `vehicleType`, `licensePlate`, `status`, `isActive`, `notes`), kiểm tra trùng email với mã lỗi `409`.
+- `PUT /api/drivers/:id`: Cập nhật thông tin tài khoản, mật khẩu tùy chọn, depot phụ trách (`storeId`), phương tiện, trạng thái vận hành và cờ hoạt động `isActive`. **Chặn đổi depot (`400`)** nếu tài xế đang có chuyến `ASSIGNED`/`IN_TRANSIT` hoặc depot đích đang ngừng hoạt động.
 - `DELETE /api/drivers/:id`: Chặn xóa (`400`) nếu tài xế đang có chuyến `ASSIGNED` hoặc `IN_TRANSIT`; với các chuyến đã hoàn tất, tự động gỡ liên kết (`Trip.driverId = null`) trước khi xóa `User` (cascade sang `DriverProfile`).
 
 #### Quản lý Điểm xuất phát & Kho hàng (Multi-Depot / Store Management)
-- `GET /api/stores`: Danh sách điểm xuất phát (kèm `ordersCount`, `tripsCount`, `totalStock`, `inStockSkuCount`, `lowStockSkuCount`), hỗ trợ phân trang phía server (`?page=1&limit=20`), tìm kiếm theo mã kho/tên/địa chỉ/SĐT (`?search=`), lọc trạng thái (`?status=ALL|ACTIVE|INACTIVE`) hoặc chỉ lấy điểm đang hoạt động (`?activeOnly=true`). Trả về `data`, `pagination` và `summary`.
-- `GET /api/stores/:id`: Xem chi tiết một điểm xuất phát kèm thống kê tồn kho.
+- `GET /api/stores`: Danh sách điểm xuất phát (kèm `ordersCount`, `tripsCount`, `driversCount`, `totalStock`, `inStockSkuCount`, `lowStockSkuCount`), hỗ trợ phân trang phía server (`?page=1&limit=20`), tìm kiếm theo mã kho/tên/địa chỉ/SĐT (`?search=`), lọc trạng thái (`?status=ALL|ACTIVE|INACTIVE`) hoặc chỉ lấy điểm đang hoạt động (`?activeOnly=true`). Trả về `data`, `pagination` và `summary`.
+- `GET /api/stores/:id`: Xem chi tiết một điểm xuất phát kèm thống kê tồn kho và số lượng tài xế.
 - `GET /api/stores/:id/inventory`: Xem danh sách sản phẩm và tồn kho tại riêng depot `:id` (hỗ trợ phân trang `?page=1&limit=15`, tìm kiếm `?search=`, lọc danh mục `?category=` và mức tồn `?stockFilter=ALL|IN_STOCK|LOW_STOCK|OUT_OF_STOCK`).
 - `PUT /api/stores/:id/inventory`: Cập nhật nhanh hàng loạt tồn kho sản phẩm tại depot `:id` (`{ "items": [{ "productId": 1, "quantity": 50 }] }`) trong Prisma transaction.
 - `POST /api/stores`: Tạo điểm xuất phát mới (tự sinh mã `DEP-001`, `DEP-002`... nếu bỏ trống, kiểm tra trùng mã & tọa độ GPS hợp lệ). Nếu chọn `isDefault: true` (hoặc là kho đầu tiên), tự động đồng bộ duy nhất 1 điểm mặc định trong Prisma transaction và đặt `isActive: true`.
 - `PUT /api/stores/:id`: Cập nhật thông tin, tọa độ, trạng thái hoạt động và cờ mặc định; chặn tắt hoạt động hoặc bỏ mặc định khi chưa chọn điểm khác làm mặc định.
 - `PATCH /api/stores/:id/set-default`: Đặt nhanh một điểm xuất phát làm mặc định của hệ thống (tự động kích hoạt `isActive: true` và gỡ `isDefault` ở điểm cũ trong transaction).
-- `DELETE /api/stores/:id`: Chặn xóa (`400`) nếu là điểm xuất phát mặc định hoặc đã có đơn hàng/chuyến xe gắn liền (gợi ý chuyển sang trạng thái *Ngừng hoạt động*).
+- `DELETE /api/stores/:id`: Chặn xóa (`400`) nếu là điểm xuất phát mặc định hoặc vẫn còn đơn hàng, chuyến xe, hay tài xế gắn liền (gợi ý chuyển tài xế sang depot khác hoặc chuyển sang trạng thái *Ngừng hoạt động*).
 
 #### Quản lý Chuyến xe & Tối ưu Lộ trình (Trip Lifecycle & OR-Tools Integration)
 - `GET /api/trips`: Danh sách chuyến xe (sắp xếp mới nhất trước), kèm thông tin kho (`store`), tài xế + hồ sơ phương tiện (`driver.driverProfile`) và danh sách đơn theo `deliverySequence`; hỗ trợ lọc `?status=ASSIGNED|IN_TRANSIT|COMPLETED` và tìm kiếm `?search=`.
 - `GET /api/trips/my-active`: Lấy chuyến xe đang thực hiện (hoặc chuyến mới nhất).
 - `POST /api/trips/optimize`:
-  - **Input:** `{ "storeId": 1, "orderIds": [1, 2, 3], "driverId": 3 }` (`storeId` tùy chọn — mặc định lấy điểm xuất phát `isDefault`; `driverId` tùy chọn — nếu bỏ trống sẽ ưu tiên tự động chọn tài xế `AVAILABLE` đang hoạt động).
+  - **Input:** `{ "storeId": 1, "orderIds": [1, 2, 3], "driverId": 3 }` (`storeId` tùy chọn — mặc định lấy điểm xuất phát `isDefault`; `driverId` tùy chọn — nếu bỏ trống sẽ tự động chọn tài xế `AVAILABLE` **thuộc đúng depot `storeId`**, trả `400` nếu depot không có tài xế sẵn sàng).
   - **Luồng xử lý:**
-    1. Truy vấn tọa độ Depot (`Store`) đang hoạt động, kiểm tra tài xế hợp lệ và lấy tọa độ các đơn hàng `PACKED` được chọn.
+    1. Truy vấn tọa độ Depot (`Store`) đang hoạt động, kiểm tra toàn bộ đơn hàng `PACKED` được chọn đều thuộc đúng depot (`order.storeId === store.id`, trả `400` nếu có đơn khác depot) và tài xế được chọn thuộc đúng depot đó.
     2. **Kiểm tra bán kính giao hàng ≤ 5 km (Haversine):** Chặn cứng (`400`) và liệt kê chi tiết mã đơn + khoảng cách nếu có bất kỳ đơn hàng nào cách điểm xuất phát quá 5 km.
     3. Gọi `POST http://python-solver:8090/solve-vrp`.
     4. Nhận danh sách điểm dừng đã sắp xếp tối ưu (`sequence: 1, 2, 3...`) và tổng quãng đường (`total_distance_meters`).
     5. Khởi tạo bản ghi `Trip` (`ASSIGNED`), cập nhật trạng thái tài xế sang `ON_DELIVERY`, cập nhật `tripId`, `deliverySequence` và chuyển trạng thái các đơn hàng sang `DELIVERING`.
 - `PATCH /api/trips/:id/start`: Chuyển trạng thái chuyến xe từ `ASSIGNED` ➔ `IN_TRANSIT` và đảm bảo tài xế ở trạng thái `ON_DELIVERY`.
-- `PATCH /api/trips/:id/driver`: Đổi tài xế cho chuyến chưa hoàn thành (`{ "driverId": 4 }`), chuyển tài xế mới sang `ON_DELIVERY` và giải phóng tài xế cũ về `AVAILABLE` nếu không còn chuyến hoạt động khác.
+- `PATCH /api/trips/:id/driver`: Đổi tài xế cho chuyến chưa hoàn thành (`{ "driverId": 4 }`), **yêu cầu tài xế mới thuộc đúng depot của chuyến (`driverProfile.storeId === trip.storeId`)**, chuyển tài xế mới sang `ON_DELIVERY` và giải phóng tài xế cũ về `AVAILABLE` nếu không còn chuyến hoạt động khác.
 - `POST /api/trips/:id/reoptimize`: Gọi lại Google OR-Tools VRP cho các đơn `DELIVERING` còn lại của chuyến xe, cập nhật lại `deliverySequence` và `totalDistance`.
 - `DELETE /api/trips/:id`: Hủy chuyến xe chưa hoàn thành — đưa toàn bộ đơn `DELIVERING` về trạng thái `PACKED` (`tripId: null, deliverySequence: null`), xóa chuyến (hoặc đóng `COMPLETED` nếu chuyến đã có đơn `COMPLETED`/`FAILED` để giữ lịch sử) và đồng bộ lại trạng thái tài xế về `AVAILABLE` nếu không còn chuyến hoạt động khác.
 
@@ -498,15 +504,15 @@ Giao diện đơn trang (SPA) tại `http://localhost:5173` được xây dựng
    - **Thao tác CRUD:** Thêm sản phẩm, chỉnh sửa (`ProductFormModal.tsx` cho phép nhập tồn kho riêng cho từng depot kèm tổng tồn tự tính), bật/tắt trạng thái đang bán và xóa sản phẩm có hộp thoại xác nhận (dành cho `ADMIN` & `WAREHOUSE`; `DRIVER` ở chế độ chỉ xem).
 5. **Trang Quản Lý Tài Xế (`DriverManagementPage.tsx` & `DriverFormModal.tsx`):**
    - **4 thẻ KPI tổng quan:** Tổng tài xế, Đang sẵn sàng (`AVAILABLE`), Đang giao hàng (`ON_DELIVERY`), Ngừng hoạt động (tính từ API `summary`).
-   - **Tìm kiếm & Lọc:** Tìm kiếm theo tên/SĐT/email/biển số (debounce `250ms`), lọc theo trạng thái vận hành (`AVAILABLE`, `ON_DELIVERY`, `OFFLINE`) và loại xe (`Xe máy`, `Xe tải nhỏ`, `Xe van`).
+   - **Quản lý theo Depot & Tìm kiếm/Lọc:** Hiển thị cột **Depot** (mã + tên kho) cho từng tài xế; hỗ trợ tìm kiếm theo tên/SĐT/email/biển số (debounce `250ms`), lọc theo **Depot**, trạng thái vận hành (`AVAILABLE`, `ON_DELIVERY`, `OFFLINE`) và loại xe (`Xe máy`, `Xe tải nhỏ`, `Xe van`).
    - **Thông tin chuyến giao & Phân trang server:** Hiển thị mã chuyến đang chạy (`TRIP-...`) cùng tổng số chuyến của mỗi tài xế, hỗ trợ phân trang phía server (`10 / 20 / 50 / 100`).
-   - **Phân quyền & Thao tác CRUD:** Chỉ `ADMIN` được thêm, chỉnh sửa (`DriverFormModal.tsx`), bật/tắt hoạt động và xóa tài xế (tự động khóa nút xóa khi tài xế đang có chuyến hoạt động); `WAREHOUSE` và `DRIVER` ở chế độ chỉ xem.
+   - **Phân quyền & Thao tác CRUD:** Chỉ `ADMIN` được thêm, chỉnh sửa (`DriverFormModal.tsx` bắt buộc chọn **Depot phụ trách** và tự khóa đổi depot khi tài xế đang có chuyến hoạt động), bật/tắt hoạt động và xóa tài xế (tự động khóa nút xóa khi tài xế đang có chuyến hoạt động); `WAREHOUSE` và `DRIVER` ở chế độ chỉ xem.
 6. **Trang Quản Lý Điểm Xuất Phát / Kho Hàng (`#depots`, `DepotManagementPage.tsx`, `DepotFormModal.tsx` & `DepotInventoryModal.tsx`):**
    - **4 thẻ KPI tổng quan:** Tổng điểm xuất phát, Đang hoạt động, Điểm xuất phát mặc định (kèm bán kính phục vụ tối đa 5 km) và tổng Đơn hàng / Chuyến xe.
    - **Bản đồ tổng quan Leaflet:** Hiển thị toàn bộ các điểm xuất phát (đánh dấu nổi bật kho mặc định ⭐); click vào một điểm trên bản đồ hoặc bảng danh sách để focus và xem vòng tròn phủ sóng **5 km**.
-   - **Quản lý tồn kho tại từng Depot:** Bảng danh sách hiển thị tổng số lượng tồn kho và số SKU còn hàng của từng depot; nút **Tồn kho** mở `DepotInventoryModal.tsx` để tìm kiếm, lọc theo trạng thái tồn (`Còn hàng`, `Sắp hết`, `Hết hàng`) và cập nhật nhanh hàng loạt số lượng tồn kho cho depot đó (`ADMIN` & `WAREHOUSE` được chỉnh sửa; `DRIVER` chỉ xem).
+   - **Quản lý tồn kho & Đội ngũ tại từng Depot:** Bảng danh sách hiển thị tổng tồn kho, số SKU còn hàng cùng số lượng đơn hàng, chuyến xe và **tài xế** thuộc từng depot; nút **Tồn kho** mở `DepotInventoryModal.tsx` để tìm kiếm, lọc theo trạng thái tồn (`Còn hàng`, `Sắp hết`, `Hết hàng`) và cập nhật nhanh hàng loạt số lượng tồn kho cho depot đó (`ADMIN` & `WAREHOUSE` được chỉnh sửa; `DRIVER` chỉ xem).
    - **Tìm kiếm, Lọc & Phân trang server:** Tìm theo mã kho, tên, địa chỉ, SĐT (debounce `250ms`), lọc trạng thái (`Tất cả`, `Đang hoạt động`, `Ngừng hoạt động`) và phân trang phía server (`10 / 20 / 50`).
-   - **Phân quyền & Thao tác CRUD:** Chỉ `ADMIN` được thêm, chỉnh sửa (`DepotFormModal.tsx` có bản đồ chọn tọa độ + vòng tròn 5 km), đặt mặc định, bật/tắt hoạt động và xóa (chặn xóa kho mặc định hoặc kho đã có đơn hàng/chuyến xe gắn vào); `WAREHOUSE` và `DRIVER` ở chế độ chỉ xem thông tin kho.
+   - **Phân quyền & Thao tác CRUD:** Chỉ `ADMIN` được thêm, chỉnh sửa (`DepotFormModal.tsx` có bản đồ chọn tọa độ + vòng tròn 5 km), đặt mặc định, bật/tắt hoạt động và xóa (chặn xóa kho mặc định hoặc kho vẫn còn đơn hàng, chuyến xe hoặc tài xế gắn vào); `WAREHOUSE` và `DRIVER` ở chế độ chỉ xem thông tin kho.
 
 ---
 

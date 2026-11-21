@@ -5,7 +5,19 @@ import prisma from '../lib/prisma';
 const VALID_DRIVER_STATUSES = new Set<string>(Object.values(DriverStatus));
 
 const DRIVER_INCLUDE = {
-  driverProfile: true,
+  driverProfile: {
+    include: {
+      store: {
+        select: {
+          id: true,
+          code: true,
+          name: true,
+          isActive: true,
+          isDefault: true,
+        },
+      },
+    },
+  },
   trips: {
     where: { status: { in: ['ASSIGNED', 'IN_TRANSIT'] } },
     orderBy: { createdAt: 'desc' as const },
@@ -30,11 +42,22 @@ type DriverWithRelations = Prisma.UserGetPayload<{
 
 function serializeDriver(user: DriverWithRelations) {
   const activeTrip = user.trips[0] ?? null;
+  const store = user.driverProfile?.store ?? null;
   return {
     id: user.id,
     email: user.email,
     name: user.name,
     role: user.role,
+    storeId: user.driverProfile?.storeId ?? null,
+    store: store
+      ? {
+          id: store.id,
+          code: store.code || `DEP-${String(store.id).padStart(3, '0')}`,
+          name: store.name,
+          isActive: store.isActive,
+          isDefault: store.isDefault,
+        }
+      : null,
     phone: user.driverProfile?.phone ?? '',
     vehicleType: user.driverProfile?.vehicleType ?? 'Xe máy',
     licensePlate: user.driverProfile?.licensePlate ?? '',
@@ -61,6 +84,9 @@ export const getDrivers = async (req: Request, res: Response) => {
     const status = typeof req.query.status === 'string' ? req.query.status.trim() : '';
     const vehicleType =
       typeof req.query.vehicleType === 'string' ? req.query.vehicleType.trim() : '';
+    const rawStoreId = typeof req.query.storeId === 'string' ? req.query.storeId.trim() : '';
+    const parsedStoreId =
+      rawStoreId && rawStoreId !== 'ALL' ? Number(rawStoreId) : null;
     const activeOnly = req.query.activeOnly === 'true';
     const availableOnly = req.query.availableOnly === 'true';
 
@@ -86,6 +112,9 @@ export const getDrivers = async (req: Request, res: Response) => {
     }
     if (vehicleType && vehicleType !== 'ALL') {
       profileFilter.vehicleType = vehicleType;
+    }
+    if (parsedStoreId !== null && Number.isInteger(parsedStoreId) && parsedStoreId > 0) {
+      profileFilter.storeId = parsedStoreId;
     }
 
     const where: Prisma.UserWhereInput = {
@@ -195,6 +224,7 @@ export const createDriver = async (req: Request, res: Response) => {
       phone,
       vehicleType,
       licensePlate,
+      storeId,
       status = DriverStatus.AVAILABLE,
       isActive = true,
       notes,
@@ -210,6 +240,7 @@ export const createDriver = async (req: Request, res: Response) => {
     const trimmedPlate =
       typeof licensePlate === 'string' ? licensePlate.trim().toUpperCase() : '';
     const trimmedNotes = typeof notes === 'string' && notes.trim() ? notes.trim() : null;
+    const parsedStoreId = Number(storeId);
 
     if (!trimmedName) {
       return res.status(400).json({ success: false, message: 'Vui lòng nhập họ tên tài xế.' });
@@ -222,6 +253,20 @@ export const createDriver = async (req: Request, res: Response) => {
     }
     if (!trimmedPlate) {
       return res.status(400).json({ success: false, message: 'Vui lòng nhập biển số xe.' });
+    }
+    if (!Number.isInteger(parsedStoreId) || parsedStoreId <= 0) {
+      return res.status(400).json({ success: false, message: 'Vui lòng chọn depot cho tài xế.' });
+    }
+
+    const targetStore = await prisma.store.findUnique({ where: { id: parsedStoreId } });
+    if (!targetStore) {
+      return res.status(404).json({ success: false, message: 'Không tìm thấy depot được chọn.' });
+    }
+    if (!targetStore.isActive) {
+      return res.status(400).json({
+        success: false,
+        message: `Depot "${targetStore.name}" hiện đang ngừng hoạt động, không thể gán tài xế mới.`,
+      });
     }
 
     const parsedIsActive = Boolean(isActive);
@@ -248,6 +293,7 @@ export const createDriver = async (req: Request, res: Response) => {
         role: Role.DRIVER,
         driverProfile: {
           create: {
+            storeId: targetStore.id,
             phone: trimmedPhone,
             vehicleType: trimmedVehicleType,
             licensePlate: trimmedPlate,
@@ -292,6 +338,7 @@ export const updateDriver = async (req: Request, res: Response) => {
       phone,
       vehicleType,
       licensePlate,
+      storeId,
       status,
       isActive,
       notes,
@@ -330,6 +377,42 @@ export const updateDriver = async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, message: 'Vui lòng nhập biển số xe.' });
     }
 
+    const currentStoreId = existing.driverProfile?.storeId ?? null;
+    const nextStoreId =
+      storeId !== undefined && storeId !== null && storeId !== ''
+        ? Number(storeId)
+        : currentStoreId;
+
+    if (!nextStoreId || !Number.isInteger(nextStoreId) || nextStoreId <= 0) {
+      return res.status(400).json({ success: false, message: 'Vui lòng chọn depot cho tài xế.' });
+    }
+
+    if (nextStoreId !== currentStoreId) {
+      const activeTripsCount = await prisma.trip.count({
+        where: {
+          driverId: id,
+          status: { in: ['ASSIGNED', 'IN_TRANSIT'] },
+        },
+      });
+      if (activeTripsCount > 0) {
+        return res.status(400).json({
+          success: false,
+          message: `Không thể đổi depot cho tài xế "${existing.name}" vì đang có ${activeTripsCount} chuyến giao hàng hoạt động.`,
+        });
+      }
+
+      const targetStore = await prisma.store.findUnique({ where: { id: nextStoreId } });
+      if (!targetStore) {
+        return res.status(404).json({ success: false, message: 'Không tìm thấy depot được chọn.' });
+      }
+      if (!targetStore.isActive) {
+        return res.status(400).json({
+          success: false,
+          message: `Depot "${targetStore.name}" hiện đang ngừng hoạt động, không thể chuyển tài xế sang depot này.`,
+        });
+      }
+    }
+
     if (trimmedEmail !== existing.email) {
       const duplicate = await prisma.user.findUnique({ where: { email: trimmedEmail } });
       if (duplicate) {
@@ -364,6 +447,7 @@ export const updateDriver = async (req: Request, res: Response) => {
       driverProfile: {
         upsert: {
           create: {
+            storeId: nextStoreId,
             phone: trimmedPhone,
             vehicleType: trimmedVehicleType,
             licensePlate: trimmedPlate,
@@ -372,6 +456,7 @@ export const updateDriver = async (req: Request, res: Response) => {
             notes: trimmedNotes,
           },
           update: {
+            storeId: nextStoreId,
             phone: trimmedPhone,
             vehicleType: trimmedVehicleType,
             licensePlate: trimmedPlate,

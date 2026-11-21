@@ -43,6 +43,8 @@ model DriverProfile {
   id           Int          @id @default(autoincrement())
   userId       Int          @unique
   user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  storeId      Int
+  store        Store        @relation(fields: [storeId], references: [id])
   phone        String
   vehicleType  String       @default("Xe máy")
   licensePlate String
@@ -51,24 +53,27 @@ model DriverProfile {
   notes        String?
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
+
+  @@index([storeId])
 }
 
 model Store {
-  id          Int          @id @default(autoincrement())
-  code        String?      @unique
+  id          Int             @id @default(autoincrement())
+  code        String?         @unique
   name        String
   address     String
-  latitude    Float        // Điểm xuất phát (Depot) cho thuật toán VRP
+  latitude    Float           // Điểm xuất phát (Depot) cho thuật toán VRP
   longitude   Float
-  phone       String       @default("")
-  isDefault   Boolean      @default(false)
-  isActive    Boolean      @default(true)
+  phone       String          @default("")
+  isDefault   Boolean         @default(false)
+  isActive    Boolean         @default(true)
   notes       String?
   orders      Order[]
   trips       Trip[]
   depotStocks DepotStock[]
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @default(now()) @updatedAt
+  drivers     DriverProfile[]
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @default(now()) @updatedAt
 }
 
 model Order {

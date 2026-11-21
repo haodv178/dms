@@ -4,7 +4,7 @@ import prisma from '../lib/prisma';
 import { LOW_STOCK_THRESHOLD } from '../lib/inventory';
 
 type StoreWithCounts = Prisma.StoreGetPayload<{
-  include: { _count: { select: { orders: true; trips: true } } };
+  include: { _count: { select: { orders: true; trips: true; drivers: true } } };
 }>;
 
 interface StoreInventoryMetrics {
@@ -34,6 +34,7 @@ function serializeStore(
     notes: store.notes || '',
     ordersCount: store._count.orders,
     tripsCount: store._count.trips,
+    driversCount: store._count.drivers,
     totalStock: inventory.totalStock,
     inStockSkuCount: inventory.inStockSkuCount,
     lowStockSkuCount: inventory.lowStockSkuCount,
@@ -208,7 +209,7 @@ export const getStores = async (req: Request, res: Response) => {
         where,
         include: {
           _count: {
-            select: { orders: true, trips: true },
+            select: { orders: true, trips: true, drivers: true },
           },
         },
         orderBy: [{ isDefault: 'desc' }, { isActive: 'desc' }, { id: 'asc' }],
@@ -263,7 +264,7 @@ export const getStoreById = async (req: Request, res: Response) => {
 
     const store = await prisma.store.findUnique({
       where: { id },
-      include: { _count: { select: { orders: true, trips: true } } },
+      include: { _count: { select: { orders: true, trips: true, drivers: true } } },
     });
 
     if (!store) {
@@ -346,7 +347,7 @@ export const createStore = async (req: Request, res: Response) => {
           notes: trimmedNotes || null,
         },
         include: {
-          _count: { select: { orders: true, trips: true } },
+          _count: { select: { orders: true, trips: true, drivers: true } },
         },
       });
     });
@@ -465,7 +466,7 @@ export const updateStore = async (req: Request, res: Response) => {
           notes: trimmedNotes || null,
         },
         include: {
-          _count: { select: { orders: true, trips: true } },
+          _count: { select: { orders: true, trips: true, drivers: true } },
         },
       });
     });
@@ -500,7 +501,7 @@ export const setDefaultStore = async (req: Request, res: Response) => {
       return tx.store.update({
         where: { id },
         data: { isDefault: true, isActive: true },
-        include: { _count: { select: { orders: true, trips: true } } },
+        include: { _count: { select: { orders: true, trips: true, drivers: true } } },
       });
     });
 
@@ -523,7 +524,7 @@ export const deleteStore = async (req: Request, res: Response) => {
 
     const existing = await prisma.store.findUnique({
       where: { id },
-      include: { _count: { select: { orders: true, trips: true } } },
+      include: { _count: { select: { orders: true, trips: true, drivers: true } } },
     });
 
     if (!existing) {
@@ -538,10 +539,14 @@ export const deleteStore = async (req: Request, res: Response) => {
       });
     }
 
-    if (existing._count.orders > 0 || existing._count.trips > 0) {
+    if (
+      existing._count.orders > 0 ||
+      existing._count.trips > 0 ||
+      existing._count.drivers > 0
+    ) {
       return res.status(400).json({
         success: false,
-        message: `Không thể xóa điểm xuất phát "${existing.name}" vì đang gắn với ${existing._count.orders} đơn hàng và ${existing._count.trips} chuyến xe. Hãy chuyển sang trạng thái "Ngừng hoạt động" thay vì xóa.`,
+        message: `Không thể xóa điểm xuất phát "${existing.name}" vì đang gắn với ${existing._count.orders} đơn hàng, ${existing._count.trips} chuyến xe và ${existing._count.drivers} tài xế. Hãy chuyển tài xế sang depot khác hoặc chuyển sang trạng thái "Ngừng hoạt động".`,
       });
     }
 

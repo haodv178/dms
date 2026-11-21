@@ -33,6 +33,7 @@ const ORDER_WITH_RELATIONS_INCLUDE = {
           role: true,
           driverProfile: {
             select: {
+              storeId: true,
               phone: true,
               vehicleType: true,
               licensePlate: true,
@@ -714,24 +715,41 @@ export const assignDriverToOrder = async (req: Request, res: Response) => {
 
     const targetDriver = await prisma.user.findFirst({
       where: { id: parsedDriverId!, role: Role.DRIVER },
-      include: { driverProfile: true },
+      include: {
+        driverProfile: {
+          include: {
+            store: {
+              select: { id: true, code: true, name: true },
+            },
+          },
+        },
+      },
     });
     if (!targetDriver) {
       return res.status(404).json({ success: false, message: 'Không tìm thấy tài xế được chọn.' });
     }
-    if (targetDriver.driverProfile && !targetDriver.driverProfile.isActive) {
+    if (!targetDriver.driverProfile) {
+      return res.status(400).json({
+        success: false,
+        message: `Tài xế "${targetDriver.name}" chưa có hồ sơ và depot phụ trách.`,
+      });
+    }
+    if (!targetDriver.driverProfile.isActive) {
       return res.status(400).json({
         success: false,
         message: `Tài xế "${targetDriver.name}" hiện đang ngừng hoạt động.`,
       });
     }
-    if (
-      targetDriver.driverProfile &&
-      targetDriver.driverProfile.status === DriverStatus.OFFLINE
-    ) {
+    if (targetDriver.driverProfile.status === DriverStatus.OFFLINE) {
       return res.status(400).json({
         success: false,
         message: `Tài xế "${targetDriver.name}" đang ngoại tuyến (OFFLINE), không thể gán đơn hàng.`,
+      });
+    }
+    if (targetDriver.driverProfile.storeId !== existingOrder.storeId) {
+      return res.status(400).json({
+        success: false,
+        message: `Tài xế "${targetDriver.name}" thuộc depot "${targetDriver.driverProfile.store.name}", không thể nhận đơn hàng ${existingOrder.orderCode} thuộc depot "${existingOrder.store.name}".`,
       });
     }
 
@@ -763,6 +781,7 @@ export const assignDriverToOrder = async (req: Request, res: Response) => {
       let targetTrip = await tx.trip.findFirst({
         where: {
           driverId: targetDriver.id,
+          storeId: existingOrder.storeId,
           status: { in: ['ASSIGNED', 'IN_TRANSIT'] },
         },
         orderBy: { createdAt: 'desc' },
@@ -913,7 +932,12 @@ export const bulkOrderAction = async (req: Request, res: Response) => {
     let targetDriver: {
       id: number;
       name: string;
-      driverProfile: { isActive: boolean; status: DriverStatus } | null;
+      driverProfile: {
+        isActive: boolean;
+        status: DriverStatus;
+        storeId: number;
+        store: { id: number; name: string };
+      } | null;
     } | null = null;
 
     if (action === 'ASSIGN_DRIVER') {
@@ -934,6 +958,13 @@ export const bulkOrderAction = async (req: Request, res: Response) => {
             select: {
               isActive: true,
               status: true,
+              storeId: true,
+              store: {
+                select: {
+                  id: true,
+                  name: true,
+                },
+              },
             },
           },
         },
@@ -945,16 +976,19 @@ export const bulkOrderAction = async (req: Request, res: Response) => {
           message: 'Không tìm thấy tài xế được chọn.',
         });
       }
-      if (targetDriver.driverProfile && !targetDriver.driverProfile.isActive) {
+      if (!targetDriver.driverProfile) {
+        return res.status(400).json({
+          success: false,
+          message: `Tài xế "${targetDriver.name}" chưa có hồ sơ và depot phụ trách.`,
+        });
+      }
+      if (!targetDriver.driverProfile.isActive) {
         return res.status(400).json({
           success: false,
           message: `Tài xế "${targetDriver.name}" hiện đang ngừng hoạt động.`,
         });
       }
-      if (
-        targetDriver.driverProfile &&
-        targetDriver.driverProfile.status === DriverStatus.OFFLINE
-      ) {
+      if (targetDriver.driverProfile.status === DriverStatus.OFFLINE) {
         return res.status(400).json({
           success: false,
           message: `Tài xế "${targetDriver.name}" đang ngoại tuyến (OFFLINE), không thể gán đơn hàng.`,
@@ -1013,6 +1047,12 @@ export const bulkOrderAction = async (req: Request, res: Response) => {
               id: order.id,
               orderCode: order.orderCode,
               reason: `Trạng thái hiện tại là ${order.status} (chỉ hỗ trợ PACKED, DELIVERING, FAILED)`,
+            });
+          } else if (order.storeId !== targetDriver!.driverProfile!.storeId) {
+            skipped.push({
+              id: order.id,
+              orderCode: order.orderCode,
+              reason: `Thuộc depot "${order.store.name}" (tài xế thuộc depot "${targetDriver!.driverProfile!.store.name}")`,
             });
           } else if (
             order.status === OrderStatus.DELIVERING &&
@@ -1124,10 +1164,12 @@ export const bulkOrderAction = async (req: Request, res: Response) => {
         for (const oldTripId of oldTripIds) {
           await cleanupTripAfterOrderRemoval(tx, oldTripId);
         }
-      } else if (action === 'ASSIGN_DRIVER' && targetDriver) {
+      } else if (action === 'ASSIGN_DRIVER' && targetDriver && targetDriver.driverProfile) {
+        const driverStoreId = targetDriver.driverProfile.storeId;
         let targetTrip = await tx.trip.findFirst({
           where: {
             driverId: targetDriver.id,
+            storeId: driverStoreId,
             status: { in: ['ASSIGNED', 'IN_TRANSIT'] },
           },
           orderBy: { createdAt: 'desc' },

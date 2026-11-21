@@ -1,9 +1,11 @@
-import type { FormEvent } from 'react';
+import { useMemo, type FormEvent } from 'react';
+import { Warehouse } from 'lucide-react';
 import { Button } from '@astryxdesign/core/Button';
 import { CheckboxInput } from '@astryxdesign/core/CheckboxInput';
 import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog';
 import { Layout, LayoutContent, LayoutFooter } from '@astryxdesign/core/Layout';
 import { Selector } from '@astryxdesign/core/Selector';
+import { Text } from '@astryxdesign/core/Text';
 import { TextInput } from '@astryxdesign/core/TextInput';
 import {
   DRIVER_STATUS_CONFIG,
@@ -11,6 +13,7 @@ import {
   type Driver,
   type DriverFormState,
   type DriverStatus,
+  type Store,
 } from '../types/dms';
 
 interface DriverFormModalProps {
@@ -18,6 +21,7 @@ interface DriverFormModalProps {
   onOpenChange: (open: boolean) => void;
   mode: 'create' | 'edit';
   editingDriver: Driver | null;
+  stores: Store[];
   form: DriverFormState;
   onFormChange: (next: DriverFormState) => void;
   submitting: boolean;
@@ -39,12 +43,27 @@ export function DriverFormModal({
   onOpenChange,
   mode,
   editingDriver,
+  stores,
   form,
   onFormChange,
   submitting,
   onSubmit,
 }: DriverFormModalProps) {
   const isEdit = mode === 'edit';
+  const hasActiveTrip = isEdit && Boolean(editingDriver?.activeTrip);
+
+  const storeOptions = useMemo(() => {
+    const currentStoreId = editingDriver?.storeId ?? null;
+    const eligibleStores = stores.filter(
+      (s) => s.isActive !== false || (currentStoreId !== null && s.id === currentStoreId)
+    );
+    return eligibleStores.map((s) => ({
+      value: String(s.id),
+      label: `${s.code || `DEP-${String(s.id).padStart(3, '0')}`} — ${s.name}${
+        s.isDefault ? ' (Mặc định)' : ''
+      }${s.isActive === false ? ' [Ngừng hoạt động]' : ''}`,
+    }));
+  }, [stores, editingDriver?.storeId]);
 
   return (
     <Dialog
@@ -116,6 +135,32 @@ export function DriverFormModal({
                   onChange={(val) => onFormChange({ ...form, password: val })}
                   placeholder={isEdit ? 'Để trống nếu giữ nguyên' : 'Mặc định 123 nếu để trống'}
                 />
+              </div>
+
+              <div className="space-y-1">
+                <Selector
+                  label="Depot phụ trách *"
+                  variant="secondary"
+                  size="sm"
+                  width="100%"
+                  startIcon={<Warehouse className="w-3.5 h-3.5" />}
+                  isDisabled={hasActiveTrip}
+                  options={storeOptions}
+                  value={form.storeId}
+                  onChange={(val) =>
+                    onFormChange({ ...form, storeId: String(val) })
+                  }
+                />
+                {hasActiveTrip ? (
+                  <Text type="supporting" size="2xs">
+                    Không thể đổi depot khi tài xế đang có chuyến giao hàng hoạt động (
+                    {editingDriver?.activeTrip?.tripCode}).
+                  </Text>
+                ) : (
+                  <Text type="supporting" size="2xs">
+                    Tài xế chỉ được nhận đơn hàng và chuyến giao thuộc depot này.
+                  </Text>
+                )}
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">

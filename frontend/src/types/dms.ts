@@ -50,6 +50,7 @@ export interface Store {
   notes?: string | null;
   ordersCount?: number;
   tripsCount?: number;
+  driversCount?: number;
   totalStock?: number;
   inStockSkuCount?: number;
   lowStockSkuCount?: number;
@@ -173,6 +174,7 @@ export function haversineDistanceKm(
 }
 
 export interface UserDriverProfileSummary {
+  storeId?: number;
   phone: string;
   vehicleType: string;
   licensePlate: string;
@@ -566,11 +568,21 @@ export interface DriverActiveTrip {
   ordersCount: number;
 }
 
+export interface DriverStoreSummary {
+  id: number;
+  code: string;
+  name: string;
+  isActive: boolean;
+  isDefault: boolean;
+}
+
 export interface Driver {
   id: number;
   email: string;
   name: string;
   role: Role;
+  storeId: number | null;
+  store: DriverStoreSummary | null;
   phone: string;
   vehicleType: string;
   licensePlate: string;
@@ -608,6 +620,7 @@ export interface DriverFormState {
   email: string;
   password: string;
   phone: string;
+  storeId: string;
   vehicleType: string;
   licensePlate: string;
   status: DriverStatus;
@@ -643,6 +656,7 @@ export const INITIAL_DRIVER_FORM: DriverFormState = {
   email: '',
   password: '',
   phone: '',
+  storeId: '',
   vehicleType: 'Xe máy',
   licensePlate: '',
   status: 'AVAILABLE',
@@ -656,6 +670,7 @@ export function driverToFormState(driver: Driver): DriverFormState {
     email: driver.email,
     password: '',
     phone: driver.phone,
+    storeId: driver.storeId ? String(driver.storeId) : '',
     vehicleType: driver.vehicleType || 'Xe máy',
     licensePlate: driver.licensePlate,
     status: driver.status,

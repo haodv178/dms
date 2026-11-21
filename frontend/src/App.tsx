@@ -216,6 +216,7 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
   const [debouncedDriverSearch, setDebouncedDriverSearch] = useState<string>('');
   const [driverStatusFilter, setDriverStatusFilter] = useState<string>('ALL');
   const [driverVehicleFilter, setDriverVehicleFilter] = useState<string>('ALL');
+  const [driverStoreFilter, setDriverStoreFilter] = useState<string>('ALL');
   const [loadingDrivers, setLoadingDrivers] = useState<boolean>(false);
 
   const [savingDriver, setSavingDriver] = useState<boolean>(false);
@@ -314,11 +315,19 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
       limit = driverPageSize,
       search = debouncedDriverSearch,
       status = driverStatusFilter,
-      vehicleType = driverVehicleFilter
+      vehicleType = driverVehicleFilter,
+      storeFilter = driverStoreFilter
     ) => {
       setLoadingDrivers(true);
       try {
-        const res = await fetchDrivers({ page, limit, search, status, vehicleType });
+        const res = await fetchDrivers({
+          page,
+          limit,
+          search,
+          status,
+          vehicleType,
+          storeId: storeFilter === 'ALL' ? 'ALL' : Number(storeFilter),
+        });
         setDrivers(res.items);
         setDriverPagination(res.pagination);
         setDriverSummary(res.summary);
@@ -331,7 +340,15 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
         setLoadingDrivers(false);
       }
     },
-    [driverPage, driverPageSize, debouncedDriverSearch, driverStatusFilter, driverVehicleFilter, notify]
+    [
+      driverPage,
+      driverPageSize,
+      debouncedDriverSearch,
+      driverStatusFilter,
+      driverVehicleFilter,
+      driverStoreFilter,
+      notify,
+    ]
   );
 
   const loadAvailableDrivers = useCallback(async () => {
@@ -414,7 +431,8 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
       driverPageSize,
       debouncedDriverSearch,
       driverStatusFilter,
-      driverVehicleFilter
+      driverVehicleFilter,
+      driverStoreFilter
     );
   }, [
     loadDriversPage,
@@ -423,6 +441,7 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
     debouncedDriverSearch,
     driverStatusFilter,
     driverVehicleFilter,
+    driverStoreFilter,
   ]);
 
   useEffect(() => {
@@ -920,7 +939,14 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
   const handleOpenCreateDriver = () => {
     setDriverModalMode('create');
     setEditingDriver(null);
-    setDriverForm(INITIAL_DRIVER_FORM);
+    const defaultActiveStore =
+      allStores.find((s) => s.isDefault && s.isActive !== false) ??
+      allStores.find((s) => s.isActive !== false) ??
+      depot;
+    setDriverForm({
+      ...INITIAL_DRIVER_FORM,
+      storeId: String(defaultActiveStore.id),
+    });
     setShowDriverModal(true);
   };
 
@@ -949,6 +975,11 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
       notify('Vui lòng nhập biển số xe.', 'error');
       return;
     }
+    const parsedStoreId = Number(driverForm.storeId);
+    if (!Number.isInteger(parsedStoreId) || parsedStoreId <= 0) {
+      notify('Vui lòng chọn depot phụ trách cho tài xế.', 'error');
+      return;
+    }
 
     setSavingDriver(true);
     try {
@@ -962,7 +993,7 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
       setShowDriverModal(false);
       setEditingDriver(null);
       setDriverForm(INITIAL_DRIVER_FORM);
-      await Promise.all([loadDriversPage(), loadAvailableDrivers()]);
+      await Promise.all([loadDriversPage(), loadAvailableDrivers(), loadStoresPage()]);
     } catch (err) {
       notify(getErrorMessage(err), 'error');
     } finally {
@@ -1001,7 +1032,7 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
     try {
       await deleteDriver(driver.id);
       notify(`Đã xóa tài xế "${driver.name}" thành công!`);
-      await Promise.all([loadDriversPage(), loadAvailableDrivers()]);
+      await Promise.all([loadDriversPage(), loadAvailableDrivers(), loadStoresPage()]);
     } catch (err) {
       notify(getErrorMessage(err), 'error');
     }
@@ -1019,6 +1050,11 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
 
   const handleDriverVehicleFilterChange = (value: string) => {
     setDriverVehicleFilter(value);
+    setDriverPage(1);
+  };
+
+  const handleDriverStoreFilterChange = (value: string) => {
+    setDriverStoreFilter(value);
     setDriverPage(1);
   };
 
@@ -1235,6 +1271,7 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
           <DriverManagementPage
             role={role}
             drivers={drivers}
+            stores={allStores}
             pagination={driverPagination}
             summary={driverSummary}
             searchQuery={driverSearch}
@@ -1243,6 +1280,8 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
             onStatusFilterChange={handleDriverStatusFilterChange}
             vehicleTypeFilter={driverVehicleFilter}
             onVehicleTypeFilterChange={handleDriverVehicleFilterChange}
+            storeFilter={driverStoreFilter}
+            onStoreFilterChange={handleDriverStoreFilterChange}
             onPageChange={setDriverPage}
             onPageSizeChange={handleDriverPageSizeChange}
             loading={loadingDrivers}
@@ -1327,6 +1366,7 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
         }}
         mode={driverModalMode}
         editingDriver={editingDriver}
+        stores={allStores}
         form={driverForm}
         onFormChange={setDriverForm}
         submitting={savingDriver}

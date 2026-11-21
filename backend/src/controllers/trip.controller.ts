@@ -16,6 +16,7 @@ const TRIP_WITH_RELATIONS_INCLUDE = {
       role: true,
       driverProfile: {
         select: {
+          storeId: true,
           phone: true,
           vehicleType: true,
           licensePlate: true,
@@ -86,12 +87,27 @@ export const optimizeAndCreateTrip = async (req: Request, res: Response) => {
         id: { in: orderIds.map(Number) },
         status: OrderStatus.PACKED,
       },
+      include: {
+        store: { select: { id: true, name: true } },
+      },
     });
 
     if (orders.length === 0) {
       return res.status(400).json({
         success: false,
         message: 'Không có đơn hàng PACKED nào hợp lệ trong danh sách đã chọn!',
+      });
+    }
+
+    // 2a. Kiểm tra tất cả đơn hàng phải thuộc đúng depot xuất phát
+    const wrongDepotOrders = orders.filter((o) => o.storeId !== store.id);
+    if (wrongDepotOrders.length > 0) {
+      const details = wrongDepotOrders
+        .map((o) => `${o.orderCode} (${o.store.name})`)
+        .join(', ');
+      return res.status(400).json({
+        success: false,
+        message: `Có ${wrongDepotOrders.length} đơn hàng không thuộc depot "${store.name}": ${details}. Chuyến xe chỉ được gán các đơn cùng depot.`,
       });
     }
 
@@ -118,12 +134,16 @@ export const optimizeAndCreateTrip = async (req: Request, res: Response) => {
       });
     }
 
-    // Tìm và kiểm tra tài xế được chọn hoặc tự động chọn tài xế AVAILABLE
+    // Tìm và kiểm tra tài xế được chọn hoặc tự động chọn tài xế AVAILABLE cùng depot
     let assignedDriverId: number | null = driverId ? Number(driverId) : null;
     if (assignedDriverId !== null) {
       const selectedDriver = await prisma.user.findFirst({
         where: { id: assignedDriverId, role: Role.DRIVER },
-        include: { driverProfile: true },
+        include: {
+          driverProfile: {
+            include: { store: { select: { id: true, name: true } } },
+          },
+        },
       });
       if (!selectedDriver) {
         return res.status(404).json({
@@ -131,38 +151,51 @@ export const optimizeAndCreateTrip = async (req: Request, res: Response) => {
           message: 'Không tìm thấy tài xế được chọn!',
         });
       }
-      if (selectedDriver.driverProfile && !selectedDriver.driverProfile.isActive) {
+      if (!selectedDriver.driverProfile) {
+        return res.status(400).json({
+          success: false,
+          message: `Tài xế "${selectedDriver.name}" chưa có hồ sơ và depot phụ trách.`,
+        });
+      }
+      if (!selectedDriver.driverProfile.isActive) {
         return res.status(400).json({
           success: false,
           message: `Tài xế "${selectedDriver.name}" hiện đang ngừng hoạt động.`,
         });
       }
-      if (
-        selectedDriver.driverProfile &&
-        selectedDriver.driverProfile.status === DriverStatus.OFFLINE
-      ) {
+      if (selectedDriver.driverProfile.status === DriverStatus.OFFLINE) {
         return res.status(400).json({
           success: false,
           message: `Tài xế "${selectedDriver.name}" hiện đang ngoại tuyến (OFFLINE).`,
+        });
+      }
+      if (selectedDriver.driverProfile.storeId !== store.id) {
+        return res.status(400).json({
+          success: false,
+          message: `Tài xế "${selectedDriver.name}" thuộc depot "${selectedDriver.driverProfile.store.name}", không thể nhận chuyến xuất phát từ depot "${store.name}".`,
         });
       }
     } else {
       const availableDriver = await prisma.user.findFirst({
         where: {
           role: Role.DRIVER,
-          driverProfile: { is: { isActive: true, status: DriverStatus.AVAILABLE } },
+          driverProfile: {
+            is: {
+              isActive: true,
+              status: DriverStatus.AVAILABLE,
+              storeId: store.id,
+            },
+          },
         },
         orderBy: { id: 'asc' },
       });
-      if (availableDriver) {
-        assignedDriverId = availableDriver.id;
-      } else {
-        const fallbackDriver = await prisma.user.findFirst({
-          where: { role: Role.DRIVER },
-          orderBy: { id: 'asc' },
+      if (!availableDriver) {
+        return res.status(400).json({
+          success: false,
+          message: `Depot "${store.name}" hiện không có tài xế nào đang sẵn sàng (AVAILABLE). Vui lòng chọn tài xế khác hoặc thêm tài xế cho depot này.`,
         });
-        if (fallbackDriver) assignedDriverId = fallbackDriver.id;
       }
+      assignedDriverId = availableDriver.id;
     }
 
     // 3. Gửi payload sang Python OR-Tools solver
@@ -373,7 +406,10 @@ export const reassignTripDriver = async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, message: 'Vui lòng chọn tài xế hợp lệ.' });
     }
 
-    const existingTrip = await prisma.trip.findUnique({ where: { id: tripId } });
+    const existingTrip = await prisma.trip.findUnique({
+      where: { id: tripId },
+      include: { store: { select: { id: true, name: true } } },
+    });
     if (!existingTrip) {
       return res.status(404).json({ success: false, message: 'Không tìm thấy chuyến xe.' });
     }
@@ -386,24 +422,37 @@ export const reassignTripDriver = async (req: Request, res: Response) => {
 
     const targetDriver = await prisma.user.findFirst({
       where: { id: driverId, role: Role.DRIVER },
-      include: { driverProfile: true },
+      include: {
+        driverProfile: {
+          include: { store: { select: { id: true, name: true } } },
+        },
+      },
     });
     if (!targetDriver) {
       return res.status(404).json({ success: false, message: 'Không tìm thấy tài xế được chọn.' });
     }
-    if (targetDriver.driverProfile && !targetDriver.driverProfile.isActive) {
+    if (!targetDriver.driverProfile) {
+      return res.status(400).json({
+        success: false,
+        message: `Tài xế "${targetDriver.name}" chưa có hồ sơ và depot phụ trách.`,
+      });
+    }
+    if (!targetDriver.driverProfile.isActive) {
       return res.status(400).json({
         success: false,
         message: `Tài xế "${targetDriver.name}" hiện đang ngừng hoạt động.`,
       });
     }
-    if (
-      targetDriver.driverProfile &&
-      targetDriver.driverProfile.status === DriverStatus.OFFLINE
-    ) {
+    if (targetDriver.driverProfile.status === DriverStatus.OFFLINE) {
       return res.status(400).json({
         success: false,
         message: `Tài xế "${targetDriver.name}" đang ngoại tuyến (OFFLINE), không thể nhận chuyến.`,
+      });
+    }
+    if (targetDriver.driverProfile.storeId !== existingTrip.storeId) {
+      return res.status(400).json({
+        success: false,
+        message: `Tài xế "${targetDriver.name}" thuộc depot "${targetDriver.driverProfile.store.name}", không thể nhận chuyến ${existingTrip.tripCode} thuộc depot "${existingTrip.store.name}".`,
       });
     }
 

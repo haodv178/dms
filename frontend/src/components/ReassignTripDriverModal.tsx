@@ -39,9 +39,11 @@ export function ReassignTripDriverModal({
 
   const filteredDrivers = useMemo(() => {
     const q = search.trim().toLowerCase();
+    const tripStoreId = trip?.storeId ?? null;
     return drivers
       .filter((d) => {
         if (!d.isActive || d.status === 'OFFLINE') return false;
+        if (tripStoreId !== null && d.storeId !== tripStoreId) return false;
         if (!q) return true;
         return (
           d.name.toLowerCase().includes(q) ||
@@ -54,7 +56,7 @@ export function ReassignTripDriverModal({
         if (a.status !== b.status) return a.status === 'AVAILABLE' ? -1 : 1;
         return a.name.localeCompare(b.name, 'vi');
       });
-  }, [drivers, search]);
+  }, [drivers, search, trip?.storeId]);
 
   const canConfirm = Boolean(
     trip && selectedDriverId !== null && selectedDriverId !== currentDriverId
@@ -72,7 +74,11 @@ export function ReassignTripDriverModal({
         header={
           <DialogHeader
             title={trip ? `Đổi Tài Xế Chuyến ${trip.tripCode}` : 'Đổi Tài Xế Chuyến Xe'}
-            subtitle="Chọn một tài xế đang hoạt động để chuyển toàn bộ chuyến xe này"
+            subtitle={
+              trip?.store?.name
+                ? `Chỉ hiển thị tài xế đang hoạt động thuộc depot "${trip.store.name}"`
+                : 'Chọn một tài xế đang hoạt động cùng depot để chuyển toàn bộ chuyến xe này'
+            }
             onOpenChange={onOpenChange}
           />
         }
@@ -92,7 +98,8 @@ export function ReassignTripDriverModal({
             {filteredDrivers.length === 0 ? (
               <div className="py-8 text-center rounded-xl border border-border bg-muted">
                 <Text type="supporting" size="sm">
-                  Không có tài xế nào phù hợp.
+                  Không có tài xế nào phù hợp thuộc depot{' '}
+                  {trip?.store?.name ? `"${trip.store.name}"` : 'của chuyến xe'}.
                 </Text>
               </div>
             ) : (

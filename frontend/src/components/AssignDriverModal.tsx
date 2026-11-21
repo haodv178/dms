@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Check, MapPin, Search, Truck, UserMinus } from 'lucide-react';
+import { Check, MapPin, Search, Truck, UserMinus, Warehouse } from 'lucide-react';
 import { Badge } from '@astryxdesign/core/Badge';
 import { Button } from '@astryxdesign/core/Button';
 import { Card } from '@astryxdesign/core/Card';
@@ -53,8 +53,10 @@ export function AssignDriverModal({
 
   const sortedAndFilteredDrivers = useMemo(() => {
     const query = search.trim().toLowerCase();
+    const orderStoreId = order?.storeId ?? null;
     const eligible = drivers.filter((driver) => {
       if (!driver.isActive || driver.status === 'OFFLINE') return false;
+      if (orderStoreId !== null && driver.storeId !== orderStoreId) return false;
       if (!query) return true;
       return (
         driver.name.toLowerCase().includes(query) ||
@@ -73,7 +75,7 @@ export function AssignDriverModal({
       if (aOrders !== bOrders) return aOrders - bOrders;
       return a.name.localeCompare(b.name, 'vi');
     });
-  }, [drivers, search]);
+  }, [drivers, search, order?.storeId]);
 
   const statusMeta = order ? STATUS_CONFIG[order.status] : null;
   const isSameActiveDriver =
@@ -148,6 +150,19 @@ export function AssignDriverModal({
                       </Text>
                     </Stack>
 
+                    {order.store && (
+                      <Stack direction="horizontal" align="center" gap={1.5}>
+                        <Warehouse className="w-3.5 h-3.5 text-accent shrink-0" />
+                        <Text type="supporting" size="xsm">
+                          Depot:{' '}
+                          <Text type="label" size="xsm" color="primary">
+                            {order.store.name}
+                          </Text>
+                          {order.store.code ? ` (${order.store.code})` : ''}
+                        </Text>
+                      </Stack>
+                    )}
+
                     {currentDriverName && (
                       <Stack direction="horizontal" align="center" gap={1.5}>
                         <Truck className="w-3.5 h-3.5 text-accent shrink-0" />
@@ -193,7 +208,9 @@ export function AssignDriverModal({
                         Không tìm thấy tài xế phù hợp
                       </Text>
                       <Text type="supporting" size="xsm">
-                        Chỉ hiển thị tài xế đang hoạt động ở trạng thái Sẵn sàng hoặc Đang giao.
+                        Chỉ hiển thị tài xế thuộc depot{' '}
+                        {order.store?.name ? `"${order.store.name}"` : 'của đơn hàng'} đang hoạt
+                        động ở trạng thái Sẵn sàng hoặc Đang giao.
                       </Text>
                     </Stack>
                   ) : (

@@ -10,6 +10,7 @@ import {
   Truck,
   UserX,
   Users,
+  Warehouse,
 } from 'lucide-react';
 import { Badge } from '@astryxdesign/core/Badge';
 import { Button } from '@astryxdesign/core/Button';
@@ -38,11 +39,13 @@ import {
   type DriverPagination,
   type DriverSummary,
   type Role,
+  type Store,
 } from '../types/dms';
 
 interface DriverManagementPageProps {
   role: Role;
   drivers: Driver[];
+  stores: Store[];
   pagination: DriverPagination;
   summary: DriverSummary;
   searchQuery: string;
@@ -51,6 +54,8 @@ interface DriverManagementPageProps {
   onStatusFilterChange: (value: string) => void;
   vehicleTypeFilter: string;
   onVehicleTypeFilterChange: (value: string) => void;
+  storeFilter: string;
+  onStoreFilterChange: (value: string) => void;
   onPageChange: (page: number) => void;
   onPageSizeChange: (pageSize: number) => void;
   loading: boolean;
@@ -77,6 +82,7 @@ const PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
 export function DriverManagementPage({
   role,
   drivers,
+  stores,
   pagination,
   summary,
   searchQuery,
@@ -85,6 +91,8 @@ export function DriverManagementPage({
   onStatusFilterChange,
   vehicleTypeFilter,
   onVehicleTypeFilterChange,
+  storeFilter,
+  onStoreFilterChange,
   onPageChange,
   onPageSizeChange,
   loading,
@@ -97,6 +105,14 @@ export function DriverManagementPage({
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   const canManage = canRoleManageDrivers(role);
+
+  const storeFilterOptions = [
+    { value: 'ALL', label: 'Tất cả depot' },
+    ...stores.map((s) => ({
+      value: String(s.id),
+      label: `${s.code || `DEP-${String(s.id).padStart(3, '0')}`} — ${s.name}`,
+    })),
+  ];
 
   const startItem =
     pagination.total === 0 ? 0 : (pagination.page - 1) * pagination.limit + 1;
@@ -215,6 +231,18 @@ export function DriverManagementPage({
               </div>
 
               <Selector
+                label="Lọc theo depot"
+                isLabelHidden
+                variant="secondary"
+                size="sm"
+                width={200}
+                startIcon={<Warehouse className="w-3.5 h-3.5" />}
+                options={storeFilterOptions}
+                value={storeFilter}
+                onChange={(val) => onStoreFilterChange(val as string)}
+              />
+
+              <Selector
                 label="Lọc theo trạng thái"
                 isLabelHidden
                 variant="secondary"
@@ -267,6 +295,7 @@ export function DriverManagementPage({
                 <TableHeader>
                   <TableRow>
                     <TableHeaderCell>Tài Xế</TableHeaderCell>
+                    <TableHeaderCell>Depot</TableHeaderCell>
                     <TableHeaderCell>Liên Hệ</TableHeaderCell>
                     <TableHeaderCell>Phương Tiện &amp; Biển Số</TableHeaderCell>
                     <TableHeaderCell>Vận Hành</TableHeaderCell>
@@ -296,6 +325,24 @@ export function DriverManagementPage({
                               </Text>
                             )}
                           </div>
+                        </TableCell>
+
+                        <TableCell>
+                          {driver.store ? (
+                            <div className="flex flex-col gap-0.5 items-start">
+                              <Badge
+                                label={driver.store.code}
+                                variant={driver.store.isDefault ? 'purple' : 'blue'}
+                              />
+                              <Text type="supporting" size="2xs">
+                                {driver.store.name}
+                              </Text>
+                            </div>
+                          ) : (
+                            <Text type="supporting" size="xsm">
+                              Chưa gán
+                            </Text>
+                          )}
                         </TableCell>
 
                         <TableCell>

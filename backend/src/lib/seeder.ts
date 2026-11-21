@@ -53,7 +53,19 @@ const SAMPLE_DRIVERS = [
   },
 ];
 
-export async function seedDrivers(prisma: PrismaClient) {
+export async function seedDrivers(prisma: PrismaClient, storeId?: number) {
+  let targetStoreId = storeId;
+  if (!targetStoreId) {
+    const defaultStore = await prisma.store.findFirst({
+      orderBy: [{ isDefault: 'desc' }, { isActive: 'desc' }, { id: 'asc' }],
+      select: { id: true },
+    });
+    if (!defaultStore) {
+      return [];
+    }
+    targetStoreId = defaultStore.id;
+  }
+
   const drivers = [];
   for (const drv of SAMPLE_DRIVERS) {
     const user = await prisma.user.upsert({
@@ -75,6 +87,7 @@ export async function seedDrivers(prisma: PrismaClient) {
       update: {},
       create: {
         userId: user.id,
+        storeId: targetStoreId,
         phone: drv.phone,
         vehicleType: drv.vehicleType,
         licensePlate: drv.licensePlate,
@@ -90,22 +103,22 @@ export async function seedDrivers(prisma: PrismaClient) {
 }
 
 const SAMPLE_PRODUCTS = [
-  { sku: 'LM-DAIRY-001', name: 'Sữa tươi Tiệt trùng Vinamilk 1L', category: 'Sữa & Đồ uống', unit: 'Hộp', price: 35000, stock: 120 },
-  { sku: 'LM-MEAT-001', name: 'Thịt ba rọi heo CP 500g', category: 'Thực phẩm tươi sống', unit: 'Khay', price: 90000, stock: 45 },
-  { sku: 'LM-DRY-001', name: 'Gạo ST25 Ông Cua 5kg', category: 'Thực phẩm khô', unit: 'Túi', price: 195000, stock: 60 },
-  { sku: 'LM-DRY-002', name: 'Dầu ăn Neptune Light 2L', category: 'Thực phẩm khô', unit: 'Chai', price: 90000, stock: 85 },
-  { sku: 'LM-FRESH-001', name: 'Trứng gà Ba Huân Hộp 10 quả', category: 'Thực phẩm tươi sống', unit: 'Hộp', price: 35000, stock: 95 },
-  { sku: 'LM-FRESH-002', name: 'Rau cải ngọt hữu cơ 500g', category: 'Rau củ & Trái cây', unit: 'Gói', price: 20000, stock: 50 },
-  { sku: 'LM-HOME-001', name: 'Nước giặt Ariel Matic 3.2kg', category: 'Hóa mỹ phẩm', unit: 'Túi', price: 210000, stock: 30 },
-  { sku: 'LM-HOME-002', name: 'Nước xả Downy Huyền Bí 1.8L', category: 'Hóa mỹ phẩm', unit: 'Túi', price: 110000, stock: 40 },
-  { sku: 'LM-MEAT-002', name: 'Cá hồi Nauy phi lê tươi 500g', category: 'Thực phẩm tươi sống', unit: 'Khay', price: 260000, stock: 8 },
-  { sku: 'LM-FRESH-003', name: 'Salad trộn Đà Lạt 300g', category: 'Rau củ & Trái cây', unit: 'Hộp', price: 50000, stock: 28 },
-  { sku: 'LM-DRY-003', name: 'Thùng mì Hảo Hảo Tôm Chua Cay', category: 'Thực phẩm khô', unit: 'Thùng', price: 120000, stock: 75 },
-  { sku: 'LM-DRINK-001', name: 'Lốc 6 lon Coca-Cola 320ml', category: 'Sữa & Đồ uống', unit: 'Lốc', price: 56000, stock: 110 },
-  { sku: 'LM-FRUIT-001', name: 'Táo Envy New Zealand 1kg', category: 'Rau củ & Trái cây', unit: 'Kg', price: 165000, stock: 18 },
-  { sku: 'LM-MEAT-003', name: 'Thịt bò Úc xay 500g', category: 'Thực phẩm tươi sống', unit: 'Khay', price: 145000, stock: 9 },
-  { sku: 'LM-DRINK-002', name: 'Bia Heineken Silver Thùng 24 lon', category: 'Sữa & Đồ uống', unit: 'Thùng', price: 440000, stock: 24 },
-  { sku: 'LM-DRY-004', name: 'Cà phê rang xay Trung Nguyên 500g', category: 'Sữa & Đồ uống', unit: 'Gói', price: 135000, stock: 55 },
+  { sku: 'SM-DAIRY-001', name: 'Sữa tươi Tiệt trùng Vinamilk 1L', category: 'Sữa & Đồ uống', unit: 'Hộp', price: 35000, stock: 120 },
+  { sku: 'SM-MEAT-001', name: 'Thịt ba rọi heo CP 500g', category: 'Thực phẩm tươi sống', unit: 'Khay', price: 90000, stock: 45 },
+  { sku: 'SM-DRY-001', name: 'Gạo ST25 Ông Cua 5kg', category: 'Thực phẩm khô', unit: 'Túi', price: 195000, stock: 60 },
+  { sku: 'SM-DRY-002', name: 'Dầu ăn Neptune Light 2L', category: 'Thực phẩm khô', unit: 'Chai', price: 90000, stock: 85 },
+  { sku: 'SM-FRESH-001', name: 'Trứng gà Ba Huân Hộp 10 quả', category: 'Thực phẩm tươi sống', unit: 'Hộp', price: 35000, stock: 95 },
+  { sku: 'SM-FRESH-002', name: 'Rau cải ngọt hữu cơ 500g', category: 'Rau củ & Trái cây', unit: 'Gói', price: 20000, stock: 50 },
+  { sku: 'SM-HOME-001', name: 'Nước giặt Ariel Matic 3.2kg', category: 'Hóa mỹ phẩm', unit: 'Túi', price: 210000, stock: 30 },
+  { sku: 'SM-HOME-002', name: 'Nước xả Downy Huyền Bí 1.8L', category: 'Hóa mỹ phẩm', unit: 'Túi', price: 110000, stock: 40 },
+  { sku: 'SM-MEAT-002', name: 'Cá hồi Nauy phi lê tươi 500g', category: 'Thực phẩm tươi sống', unit: 'Khay', price: 260000, stock: 8 },
+  { sku: 'SM-FRESH-003', name: 'Salad trộn Đà Lạt 300g', category: 'Rau củ & Trái cây', unit: 'Hộp', price: 50000, stock: 28 },
+  { sku: 'SM-DRY-003', name: 'Thùng mì Hảo Hảo Tôm Chua Cay', category: 'Thực phẩm khô', unit: 'Thùng', price: 120000, stock: 75 },
+  { sku: 'SM-DRINK-001', name: 'Lốc 6 lon Coca-Cola 320ml', category: 'Sữa & Đồ uống', unit: 'Lốc', price: 56000, stock: 110 },
+  { sku: 'SM-FRUIT-001', name: 'Táo Envy New Zealand 1kg', category: 'Rau củ & Trái cây', unit: 'Kg', price: 165000, stock: 18 },
+  { sku: 'SM-MEAT-003', name: 'Thịt bò Úc xay 500g', category: 'Thực phẩm tươi sống', unit: 'Khay', price: 145000, stock: 9 },
+  { sku: 'SM-DRINK-002', name: 'Bia Heineken Silver Thùng 24 lon', category: 'Sữa & Đồ uống', unit: 'Thùng', price: 440000, stock: 24 },
+  { sku: 'SM-DRY-004', name: 'Cà phê rang xay Trung Nguyên 500g', category: 'Sữa & Đồ uống', unit: 'Gói', price: 135000, stock: 55 },
 ];
 
 export async function seedProducts(prisma: PrismaClient) {
@@ -382,7 +395,7 @@ export async function runSeed(prisma: PrismaClient, resetOrders = true) {
     createdOrders.push(order);
   }
 
-  const seededDrivers = await seedDrivers(prisma);
+  const seededDrivers = await seedDrivers(prisma, store.id);
 
   return {
     store,

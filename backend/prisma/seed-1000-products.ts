@@ -192,7 +192,7 @@ async function main() {
     const price = Math.round(rawPrice / 1000) * 1000;
 
     const isActive = rand() >= 0.05;
-    const sku = `LM-${cfg.prefix}-${batchSuffix}-${String(i).padStart(4, '0')}`;
+    const sku = `SM-${cfg.prefix}-${batchSuffix}-${String(i).padStart(4, '0')}`;
     const name = `${item} ${brand} ${variant}`;
 
     skus.push(sku);

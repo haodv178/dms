@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Check, Package, Search, Truck } from 'lucide-react';
+import { AlertTriangle, Check, Package, Search, Truck, Warehouse } from 'lucide-react';
 import { Badge } from '@astryxdesign/core/Badge';
 import { Button } from '@astryxdesign/core/Button';
 import { Card } from '@astryxdesign/core/Card';
@@ -45,16 +45,42 @@ export function BulkAssignDriverModal({
     }
   }, [isOpen]);
 
+  const depotBreakdown = useMemo(() => {
+    const map = new Map<number, { id: number; name: string; count: number }>();
+    for (const o of orders) {
+      const existing = map.get(o.storeId);
+      if (existing) {
+        existing.count += 1;
+      } else {
+        map.set(o.storeId, {
+          id: o.storeId,
+          name: o.store?.name || `Depot #${o.storeId}`,
+          count: 1,
+        });
+      }
+    }
+    return Array.from(map.values());
+  }, [orders]);
+
+  const singleDepot = depotBreakdown.length === 1 ? depotBreakdown[0] : null;
+  const isMultiDepot = depotBreakdown.length > 1;
+  const orderStoreIdSet = useMemo(
+    () => new Set(depotBreakdown.map((d) => d.id)),
+    [depotBreakdown]
+  );
+
   const sortedAndFilteredDrivers = useMemo(() => {
     const query = search.trim().toLowerCase();
     const eligible = drivers.filter((driver) => {
       if (!driver.isActive || driver.status === 'OFFLINE') return false;
+      if (driver.storeId === null || !orderStoreIdSet.has(driver.storeId)) return false;
       if (!query) return true;
       return (
         driver.name.toLowerCase().includes(query) ||
         driver.phone.toLowerCase().includes(query) ||
         driver.licensePlate.toLowerCase().includes(query) ||
-        driver.vehicleType.toLowerCase().includes(query)
+        driver.vehicleType.toLowerCase().includes(query) ||
+        (driver.store?.name?.toLowerCase().includes(query) ?? false)
       );
     });
 
@@ -67,7 +93,19 @@ export function BulkAssignDriverModal({
       if (aOrders !== bOrders) return aOrders - bOrders;
       return a.name.localeCompare(b.name, 'vi');
     });
-  }, [drivers, search]);
+  }, [drivers, search, orderStoreIdSet]);
+
+  const selectedDriver = useMemo(
+    () => drivers.find((d) => d.id === selectedDriverId) ?? null,
+    [drivers, selectedDriverId]
+  );
+
+  const matchingOrdersCount = useMemo(() => {
+    if (!selectedDriver || selectedDriver.storeId === null) return orders.length;
+    return orders.filter((o) => o.storeId === selectedDriver.storeId).length;
+  }, [orders, selectedDriver]);
+
+  const skippedByDepotCount = selectedDriver ? orders.length - matchingOrdersCount : 0;
 
   const totalCod = useMemo(
     () => orders.reduce((sum, o) => sum + Number(o.totalAmount || 0), 0),
@@ -80,7 +118,7 @@ export function BulkAssignDriverModal({
     return remaining > 0 ? `${codes.join(', ')} và ${remaining} đơn khác` : codes.join(', ');
   }, [orders]);
 
-  const canConfirm = orders.length > 0 && selectedDriverId !== null;
+  const canConfirm = orders.length > 0 && selectedDriverId !== null && matchingOrdersCount > 0;
 
   return (
     <Dialog
@@ -133,8 +171,39 @@ export function BulkAssignDriverModal({
                       Mã đơn: {previewCodes}
                     </Text>
                   )}
+
+                  {singleDepot && (
+                    <Stack direction="horizontal" align="center" gap={1.5}>
+                      <Warehouse className="w-3.5 h-3.5 text-accent shrink-0" />
+                      <Text type="supporting" size="xsm">
+                        Depot:{' '}
+                        <Text type="label" size="xsm" color="primary">
+                          {singleDepot.name}
+                        </Text>
+                      </Text>
+                    </Stack>
+                  )}
                 </Stack>
               </Card>
+
+              {isMultiDepot && (
+                <div className="flex items-start gap-2 p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <Text type="supporting" size="2xs">
+                    Các đơn đã chọn thuộc {depotBreakdown.length} depot khác nhau (
+                    {depotBreakdown.map((d) => `${d.name}: ${d.count} đơn`).join(', ')}). Tài xế
+                    chỉ nhận các đơn cùng depot;{' '}
+                    {selectedDriver ? (
+                      <strong>
+                        sẽ gán {matchingOrdersCount}/{orders.length} đơn và bỏ qua{' '}
+                        {skippedByDepotCount} đơn khác depot.
+                      </strong>
+                    ) : (
+                      'các đơn khác depot sẽ tự động bị bỏ qua.'
+                    )}
+                  </Text>
+                </div>
+              )}
 
               {/* Search */}
               <TextInput
@@ -166,7 +235,9 @@ export function BulkAssignDriverModal({
                       Không tìm thấy tài xế phù hợp
                     </Text>
                     <Text type="supporting" size="xsm">
-                      Chỉ hiển thị tài xế đang hoạt động ở trạng thái Sẵn sàng hoặc Đang giao.
+                      {singleDepot
+                        ? `Chỉ hiển thị tài xế thuộc depot "${singleDepot.name}" đang hoạt động ở trạng thái Sẵn sàng hoặc Đang giao.`
+                        : 'Chỉ hiển thị tài xế thuộc các depot của đơn hàng đã chọn đang hoạt động ở trạng thái Sẵn sàng hoặc Đang giao.'}
                     </Text>
                   </Stack>
                 ) : (
@@ -184,6 +255,14 @@ export function BulkAssignDriverModal({
                         driver.status === 'ON_DELIVERY' && activeOrdersCount > 0
                           ? `${driverStatusMeta.shortLabel} (${activeOrdersCount} đơn)`
                           : driverStatusMeta.shortLabel;
+
+                      const driverDepotCount =
+                        driver.storeId !== null
+                          ? depotBreakdown.find((d) => d.id === driver.storeId)?.count ?? 0
+                          : 0;
+                      const depotSuffix = isMultiDepot
+                        ? ` • ${driver.store?.name || `Depot #${driver.storeId}`} (${driverDepotCount}/${orders.length} đơn)`
+                        : '';
 
                       return (
                         <ListItem
@@ -203,7 +282,7 @@ export function BulkAssignDriverModal({
                           label={driver.name}
                           description={`${driver.vehicleType} • ${driver.licensePlate} • ${driver.phone}${
                             driver.activeTrip ? ` • ${driver.activeTrip.tripCode}` : ''
-                          }`}
+                          }${depotSuffix}`}
                           endContent={
                             <Stack direction="horizontal" align="center" gap={2}>
                               <Badge
@@ -236,7 +315,7 @@ export function BulkAssignDriverModal({
                 onClick={() => onOpenChange(false)}
               />
               <Button
-                label={`Gán tài xế (${orders.length} đơn)`}
+                label={`Gán tài xế (${selectedDriver ? matchingOrdersCount : orders.length} đơn)`}
                 type="button"
                 variant="primary"
                 size="sm"

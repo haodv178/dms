@@ -272,6 +272,7 @@ export interface FetchDriversParams {
   search?: string;
   status?: string;
   vehicleType?: string;
+  storeId?: number | 'ALL';
   activeOnly?: boolean;
   availableOnly?: boolean;
 }
@@ -286,6 +287,9 @@ export async function fetchDrivers(
   if (params.status && params.status !== 'ALL') query.status = params.status;
   if (params.vehicleType && params.vehicleType !== 'ALL') {
     query.vehicleType = params.vehicleType;
+  }
+  if (params.storeId !== undefined && params.storeId !== 'ALL') {
+    query.storeId = params.storeId;
   }
   if (params.activeOnly) query.activeOnly = true;
   if (params.availableOnly) query.availableOnly = true;
@@ -314,6 +318,7 @@ function serializeDriverPayload(form: DriverFormState) {
     email: form.email.trim().toLowerCase(),
     ...(form.password.trim() ? { password: form.password.trim() } : {}),
     phone: form.phone.trim(),
+    storeId: Number(form.storeId),
     vehicleType: form.vehicleType.trim() || 'Xe máy',
     licensePlate: form.licensePlate.trim().toUpperCase(),
     status: form.status,
