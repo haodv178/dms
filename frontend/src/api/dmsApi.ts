@@ -21,21 +21,21 @@ const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000/api
 
 export interface DashboardData {
   orders: Order[];
+  trips: Trip[];
   depot: Store | null;
-  activeTrip: Trip | null;
 }
 
 export async function fetchDashboardData(): Promise<DashboardData> {
-  const [ordersRes, overviewRes, tripRes] = await Promise.all([
+  const [ordersRes, overviewRes, tripsRes] = await Promise.all([
     axios.get(`${API_BASE}/orders`),
     axios.get(`${API_BASE}/system/overview`),
-    axios.get(`${API_BASE}/trips/my-active`),
+    axios.get(`${API_BASE}/trips`),
   ]);
 
   return {
     orders: (ordersRes.data?.data as Order[]) || [],
+    trips: (tripsRes.data?.data as Trip[]) || [],
     depot: (overviewRes.data?.data?.stores?.[0] as Store | undefined) ?? null,
-    activeTrip: (tripRes.data?.data as Trip | undefined) ?? null,
   };
 }
 
@@ -84,6 +84,46 @@ export async function optimizeTripRoute(
     ...(driverId ? { driverId } : {}),
   });
   return res.data.data as Trip;
+}
+
+export async function startTrip(tripId: number): Promise<{ trip: Trip; message: string }> {
+  const res = await axios.patch(`${API_BASE}/trips/${tripId}/start`);
+  return {
+    trip: res.data.data as Trip,
+    message: (res.data?.message as string) || 'Đã bắt đầu chuyến xe!',
+  };
+}
+
+export async function reassignTripDriver(
+  tripId: number,
+  driverId: number
+): Promise<{ trip: Trip; message: string }> {
+  const res = await axios.patch(`${API_BASE}/trips/${tripId}/driver`, { driverId });
+  return {
+    trip: res.data.data as Trip,
+    message: (res.data?.message as string) || 'Đã đổi tài xế cho chuyến xe!',
+  };
+}
+
+export async function reoptimizeTrip(
+  tripId: number
+): Promise<{ trip: Trip; message: string }> {
+  const res = await axios.post(`${API_BASE}/trips/${tripId}/reoptimize`);
+  return {
+    trip: res.data.data as Trip,
+    message: (res.data?.message as string) || 'Đã tối ưu lại lộ trình chuyến xe!',
+  };
+}
+
+export async function cancelOrDeleteTrip(
+  tripId: number
+): Promise<{ deleted: boolean; returnedOrdersCount: number; message: string }> {
+  const res = await axios.delete(`${API_BASE}/trips/${tripId}`);
+  return {
+    deleted: Boolean(res.data?.data?.deleted),
+    returnedOrdersCount: Number(res.data?.data?.returnedOrdersCount ?? 0),
+    message: (res.data?.message as string) || 'Đã hủy chuyến xe!',
+  };
 }
 
 function serializeOrderPayload(form: OrderFormState) {

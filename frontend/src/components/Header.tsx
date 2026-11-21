@@ -6,6 +6,7 @@ import {
   Package,
   Plus,
   RefreshCw,
+  Route,
   Sun,
   Truck,
   UserCheck,
@@ -32,6 +33,7 @@ interface HeaderProps {
   themeMode: ThemeMode;
   onThemeModeChange: (mode: ThemeMode) => void;
   counts: Record<string, number>;
+  tripsCount: number;
   productsCount: number;
   driversCount: number;
   loading: boolean;
@@ -53,6 +55,7 @@ export function Header({
   themeMode,
   onThemeModeChange,
   counts,
+  tripsCount,
   productsCount,
   driversCount,
   loading,
@@ -92,6 +95,11 @@ export function Header({
               value="orders"
               label={`Đơn hàng (${counts.ALL ?? 0})`}
               icon={<ClipboardList className="w-3.5 h-3.5" />}
+            />
+            <SegmentedControlItem
+              value="trips"
+              label={`Chuyến xe (${tripsCount})`}
+              icon={<Route className="w-3.5 h-3.5" />}
             />
             <SegmentedControlItem
               value="products"

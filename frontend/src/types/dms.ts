@@ -1,6 +1,7 @@
 export type Role = 'ADMIN' | 'WAREHOUSE' | 'DRIVER';
-export type ActivePage = 'orders' | 'products' | 'drivers';
+export type ActivePage = 'orders' | 'trips' | 'products' | 'drivers';
 export type DriverStatus = 'AVAILABLE' | 'ON_DELIVERY' | 'OFFLINE';
+export type TripStatus = 'ASSIGNED' | 'IN_TRANSIT' | 'COMPLETED';
 export type OrderStatus =
   | 'NEW'
   | 'PICKING'
@@ -138,6 +139,22 @@ export function canRoleAssignDriver(role: Role): boolean {
 
 export function canRoleManageDrivers(role: Role): boolean {
   return role === 'ADMIN';
+}
+
+export function canRoleCreateTrips(role: Role): boolean {
+  return role === 'ADMIN' || role === 'WAREHOUSE';
+}
+
+export function canRoleManageTrips(role: Role): boolean {
+  return role === 'ADMIN';
+}
+
+export function canRoleStartTrip(role: Role): boolean {
+  return role === 'ADMIN' || role === 'DRIVER';
+}
+
+export function canRoleUpdateStopDelivery(role: Role): boolean {
+  return role === 'ADMIN' || role === 'DRIVER';
 }
 
 export const INITIAL_ORDER_FORM: OrderFormState = {
@@ -447,6 +464,46 @@ export function driverToFormState(driver: Driver): DriverFormState {
   };
 }
 
+export const TRIP_STATUS_CONFIG: Record<
+  TripStatus,
+  { label: string; shortLabel: string; badgeVariant: StatusBadgeVariant }
+> = {
+  ASSIGNED: {
+    label: 'Chờ xuất phát (ASSIGNED)',
+    shortLabel: 'ASSIGNED',
+    badgeVariant: 'purple',
+  },
+  IN_TRANSIT: {
+    label: 'Đang giao hàng (IN_TRANSIT)',
+    shortLabel: 'IN_TRANSIT',
+    badgeVariant: 'blue',
+  },
+  COMPLETED: {
+    label: 'Hoàn thành (COMPLETED)',
+    shortLabel: 'COMPLETED',
+    badgeVariant: 'green',
+  },
+};
+
+export const TRIP_STATUS_TABS = [
+  { key: 'ALL', label: 'Tất cả' },
+  { key: 'ASSIGNED', label: 'Chờ xuất phát' },
+  { key: 'IN_TRANSIT', label: 'Đang giao' },
+  { key: 'COMPLETED', label: 'Hoàn thành' },
+] as const;
+
 export function formatVND(val: string | number): string {
   return Number(val).toLocaleString('vi-VN', { style: 'currency', currency: 'VND' });
+}
+
+export function formatDateTime(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '—';
+  return date.toLocaleString('vi-VN', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }

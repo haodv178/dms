@@ -5,6 +5,7 @@ import { Theme } from '@astryxdesign/core/theme';
 import { defaultThemeSlug, themes } from './astryx-themes';
 import {
   assignDriverToOrder,
+  cancelOrDeleteTrip,
   completeDeliveryOrder,
   completePackingOrder,
   createDriver,
@@ -18,13 +19,15 @@ import {
   fetchProducts,
   getErrorMessage,
   optimizeTripRoute,
+  reassignTripDriver,
+  reoptimizeTrip,
   seedSampleOrders,
   startPickingOrder,
+  startTrip,
   updateDriver,
   updateOrder,
   updateProduct,
 } from './api/dmsApi';
-import { ActiveTripPanel } from './components/ActiveTripPanel';
 import { AssignDriverModal } from './components/AssignDriverModal';
 import { DriverFormModal } from './components/DriverFormModal';
 import { DriverManagementPage } from './components/DriverManagementPage';
@@ -33,7 +36,7 @@ import { OrderFormModal } from './components/OrderFormModal';
 import { OrderTable } from './components/OrderTable';
 import { ProductFormModal } from './components/ProductFormModal';
 import { ProductManagementPage } from './components/ProductManagementPage';
-import { RouteMap } from './components/RouteMap';
+import { TripManagementPage } from './components/TripManagementPage';
 import {
   DEFAULT_DEPOT,
   INITIAL_DRIVER_FORM,
@@ -81,6 +84,7 @@ interface DmsDashboardProps {
 
 function readInitialPage(): ActivePage {
   if (typeof window !== 'undefined') {
+    if (window.location.hash === '#trips') return 'trips';
     if (window.location.hash === '#products') return 'products';
     if (window.location.hash === '#drivers') return 'drivers';
   }
@@ -115,9 +119,9 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
   const [loadingProducts, setLoadingProducts] = useState<boolean>(false);
 
   const [depot, setDepot] = useState<Store>(DEFAULT_DEPOT);
-  const [activeTrip, setActiveTrip] = useState<Trip | null>(null);
+  const [trips, setTrips] = useState<Trip[]>([]);
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
-  const [selectedOrderIds, setSelectedOrderIds] = useState<number[]>([]);
+  const [orderSearch, setOrderSearch] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(false);
   const [optimizing, setOptimizing] = useState<boolean>(false);
   const [savingOrder, setSavingOrder] = useState<boolean>(false);
@@ -135,7 +139,6 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
   const [drivers, setDrivers] = useState<Driver[]>([]);
   const [availableDrivers, setAvailableDrivers] = useState<Driver[]>([]);
   const [assignableDrivers, setAssignableDrivers] = useState<Driver[]>([]);
-  const [selectedDriverId, setSelectedDriverId] = useState<string>('AUTO');
   const [assigningOrder, setAssigningOrder] = useState<Order | null>(null);
   const [savingAssignment, setSavingAssignment] = useState<boolean>(false);
   const [driverPagination, setDriverPagination] = useState<DriverPagination>({
@@ -268,10 +271,6 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
       setAssignableDrivers(eligible);
       setAvailableDrivers(available);
       setDriverSummary(res.summary);
-      setSelectedDriverId((prev) => {
-        if (prev === 'AUTO') return prev;
-        return available.some((d) => String(d.id) === prev) ? prev : 'AUTO';
-      });
     } catch {
       // Ignore secondary driver fetch error
     }
@@ -286,15 +285,10 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
         loadAvailableDrivers(),
       ]);
       setOrders(data.orders);
+      setTrips(data.trips);
       if (data.depot) {
         setDepot(data.depot);
       }
-      setActiveTrip(data.activeTrip);
-
-      const packedSet = new Set(
-        data.orders.filter((o) => o.status === 'PACKED').map((o) => o.id)
-      );
-      setSelectedOrderIds((prev) => prev.filter((id) => packedSet.has(id)));
     } catch (err) {
       notify(`Không thể kết nối Backend: ${getErrorMessage(err)}`, 'error');
     } finally {
@@ -337,8 +331,6 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
     try {
       const message = await seedSampleOrders();
       notify(message, 'info');
-      setSelectedOrderIds([]);
-      setActiveTrip(null);
       await Promise.all([loadAllData(), loadDriversPage()]);
     } catch (err) {
       notify(`Lỗi nạp dữ liệu mẫu: ${getErrorMessage(err)}`, 'error');
@@ -361,7 +353,6 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
     try {
       await completePackingOrder(orderId);
       notify(`Đơn #${orderId}: Đã ĐÓNG GÓI XONG (PACKED) — Sẵn sàng điều phối!`);
-      setSelectedOrderIds((prev) => (prev.includes(orderId) ? prev : [...prev, orderId]));
       await loadAllData();
     } catch (err) {
       notify(getErrorMessage(err), 'error');
@@ -382,9 +373,8 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
         await completePackingOrder(o.id);
       }
       await loadAllData();
-      setSelectedOrderIds(pickingOrders.map((o) => o.id));
       notify(
-        `Đã nhặt & đóng gói nhanh ${pickingOrders.length} đơn hàng! Sẵn sàng chạy OR-Tools.`
+        `Đã nhặt & đóng gói nhanh ${pickingOrders.length} đơn hàng! Bạn có thể tạo chuyến tại trang Chuyến xe.`
       );
     } catch (err) {
       notify(getErrorMessage(err), 'error');
@@ -424,7 +414,6 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
       const { message } = await assignDriverToOrder(orderId, driverId);
       notify(message, 'info');
       setAssigningOrder(null);
-      setSelectedOrderIds((prev) => prev.filter((id) => id !== orderId));
       await Promise.all([loadAllData(), loadDriversPage()]);
     } catch (err) {
       notify(getErrorMessage(err), 'error');
@@ -447,39 +436,71 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
     }
   };
 
-  const handleOptimizeRoute = async () => {
-    const targetIds =
-      selectedOrderIds.length > 0
-        ? selectedOrderIds
-        : orders.filter((o) => o.status === 'PACKED').map((o) => o.id);
-
-    if (targetIds.length === 0) {
-      notify(
-        'Vui lòng chuyển ít nhất 1 đơn hàng sang trạng thái PACKED và tick chọn trước khi tối ưu!',
-        'error'
-      );
-      return;
+  const handleCreateTrip = async (
+    orderIds: number[],
+    driverId: number | null
+  ): Promise<Trip | null> => {
+    if (orderIds.length === 0) {
+      notify('Vui lòng chọn ít nhất 1 đơn hàng PACKED để tạo chuyến!', 'error');
+      return null;
     }
 
     setOptimizing(true);
     try {
-      const driverIdToAssign =
-        selectedDriverId !== 'AUTO' ? Number(selectedDriverId) : null;
-      const trip = await optimizeTripRoute(depot.id, targetIds, driverIdToAssign);
-      setActiveTrip(trip);
-      setSelectedOrderIds([]);
-      setSelectedDriverId('AUTO');
+      const trip = await optimizeTripRoute(depot.id, orderIds, driverId);
       const driverLabel = trip?.driver?.name ? ` — Tài xế: ${trip.driver.name}` : '';
       notify(
-        `Google OR-Tools đã tối ưu lộ trình cho ${targetIds.length} điểm giao (${(
+        `Google OR-Tools đã tối ưu lộ trình cho ${orderIds.length} điểm giao (${(
           (trip?.totalDistance || 0) / 1000
         ).toFixed(2)} km)${driverLabel}!`
       );
       await Promise.all([loadAllData(), loadDriversPage()]);
+      return trip;
     } catch (err) {
       notify(`Lỗi gọi OR-Tools Solver: ${getErrorMessage(err)}`, 'error');
+      return null;
     } finally {
       setOptimizing(false);
+    }
+  };
+
+  const handleStartTrip = async (tripId: number) => {
+    try {
+      const { message } = await startTrip(tripId);
+      notify(message, 'info');
+      await Promise.all([loadAllData(), loadDriversPage()]);
+    } catch (err) {
+      notify(getErrorMessage(err), 'error');
+    }
+  };
+
+  const handleReassignTripDriver = async (tripId: number, driverId: number) => {
+    try {
+      const { message } = await reassignTripDriver(tripId, driverId);
+      notify(message, 'info');
+      await Promise.all([loadAllData(), loadDriversPage()]);
+    } catch (err) {
+      notify(getErrorMessage(err), 'error');
+    }
+  };
+
+  const handleReoptimizeTrip = async (tripId: number) => {
+    try {
+      const { message } = await reoptimizeTrip(tripId);
+      notify(message, 'info');
+      await loadAllData();
+    } catch (err) {
+      notify(getErrorMessage(err), 'error');
+    }
+  };
+
+  const handleCancelTrip = async (tripId: number) => {
+    try {
+      const { message } = await cancelOrDeleteTrip(tripId);
+      notify(message, 'info');
+      await Promise.all([loadAllData(), loadDriversPage()]);
+    } catch (err) {
+      notify(getErrorMessage(err), 'error');
     }
   };
 
@@ -563,29 +584,34 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
     }
   };
 
-  const toggleSelectOrder = (id: number) => {
-    setSelectedOrderIds((prev) =>
-      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
-    );
-  };
+  const sortedOrders = useMemo(() => {
+    return [...orders].sort((a, b) => {
+      const diff = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      if (diff !== 0) return diff;
+      return b.id - a.id;
+    });
+  }, [orders]);
 
   const packedOrders = useMemo(
-    () => orders.filter((o) => o.status === 'PACKED'),
-    [orders]
+    () => sortedOrders.filter((o) => o.status === 'PACKED'),
+    [sortedOrders]
   );
 
-  const toggleSelectAllPacked = () => {
-    if (selectedOrderIds.length === packedOrders.length && packedOrders.length > 0) {
-      setSelectedOrderIds([]);
-    } else {
-      setSelectedOrderIds(packedOrders.map((o) => o.id));
-    }
-  };
-
   const filteredOrders = useMemo(() => {
-    if (statusFilter === 'ALL') return orders;
-    return orders.filter((o) => o.status === statusFilter);
-  }, [orders, statusFilter]);
+    const q = orderSearch.trim().toLowerCase();
+    return sortedOrders.filter((o) => {
+      if (statusFilter !== 'ALL' && o.status !== statusFilter) return false;
+      if (!q) return true;
+      return (
+        o.orderCode.toLowerCase().includes(q) ||
+        o.customerName.toLowerCase().includes(q) ||
+        o.customerPhone.toLowerCase().includes(q) ||
+        o.customerAddress.toLowerCase().includes(q) ||
+        (o.trip?.tripCode?.toLowerCase().includes(q) ?? false) ||
+        (o.trip?.driver?.name?.toLowerCase().includes(q) ?? false)
+      );
+    });
+  }, [sortedOrders, statusFilter, orderSearch]);
 
   const counts = useMemo(() => {
     const map: Record<string, number> = {
@@ -602,32 +628,6 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
     }
     return map;
   }, [orders]);
-
-  const routedOrders = useMemo(() => {
-    if (activeTrip?.orders && activeTrip.orders.length > 0) {
-      return [...activeTrip.orders].sort(
-        (a, b) => (a.deliverySequence || 999) - (b.deliverySequence || 999)
-      );
-    }
-    return orders
-      .filter((o) => o.deliverySequence !== null && o.deliverySequence !== undefined)
-      .sort((a, b) => (a.deliverySequence || 999) - (b.deliverySequence || 999));
-  }, [activeTrip, orders]);
-
-  const polylinePositions = useMemo<[number, number][]>(() => {
-    if (routedOrders.length === 0) return [];
-    return [
-      [depot.latitude, depot.longitude],
-      ...routedOrders.map((o): [number, number] => [o.latitude, o.longitude]),
-    ];
-  }, [depot, routedOrders]);
-
-  const allMapPoints = useMemo<[number, number][]>(() => {
-    return [
-      [depot.latitude, depot.longitude],
-      ...orders.map((o): [number, number] => [o.latitude, o.longitude]),
-    ];
-  }, [depot, orders]);
 
   const handleOpenCreateProduct = () => {
     setProductModalMode('create');
@@ -844,6 +844,7 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
         themeMode={themeMode}
         onThemeModeChange={onThemeModeChange}
         counts={counts}
+        tripsCount={trips.length}
         productsCount={productSummary.totalProducts}
         driversCount={driverSummary.totalDrivers}
         loading={loading}
@@ -852,24 +853,17 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
       />
 
       {activePage === 'orders' ? (
-        <main className="flex-1 max-w-[1600px] w-full mx-auto px-4 sm:px-6 py-5 grid grid-cols-1 lg:grid-cols-12 gap-5">
+        <main className="flex-1 max-w-[1600px] w-full mx-auto px-4 sm:px-6 py-5">
           <OrderTable
             role={role}
             filteredOrders={filteredOrders}
-            packedOrdersCount={packedOrders.length}
             counts={counts}
             statusFilter={statusFilter}
             onStatusFilterChange={setStatusFilter}
-            selectedOrderIds={selectedOrderIds}
-            onToggleSelectOrder={toggleSelectOrder}
-            onToggleSelectAllPacked={toggleSelectAllPacked}
-            availableDrivers={availableDrivers}
-            selectedDriverId={selectedDriverId}
-            onSelectedDriverIdChange={setSelectedDriverId}
+            searchQuery={orderSearch}
+            onSearchQueryChange={setOrderSearch}
             loading={loading}
-            optimizing={optimizing}
             onBatchPreparePacked={handleBatchPreparePacked}
-            onOptimizeRoute={handleOptimizeRoute}
             onEditOrder={handleOpenEditOrder}
             onOpenAssignDriver={handleOpenAssignDriver}
             onStartPicking={handleStartPicking}
@@ -877,24 +871,26 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
             onCompleteDelivery={handleCompleteDelivery}
             onFailDelivery={handleFailDelivery}
           />
-
-          <section className="lg:col-span-5 flex flex-col gap-4">
-            <RouteMap
-              depot={depot}
-              orders={orders}
-              selectedOrderIds={selectedOrderIds}
-              polylinePositions={polylinePositions}
-              allMapPoints={allMapPoints}
-              isDarkMode={isDarkMode}
-            />
-
-            <ActiveTripPanel
-              depot={depot}
-              activeTrip={activeTrip}
-              routedOrders={routedOrders}
-              onCompleteDelivery={handleCompleteDelivery}
-            />
-          </section>
+        </main>
+      ) : activePage === 'trips' ? (
+        <main className="flex-1 max-w-[1600px] w-full mx-auto px-4 sm:px-6 py-5">
+          <TripManagementPage
+            role={role}
+            depot={depot}
+            trips={trips}
+            packedOrders={packedOrders}
+            availableDrivers={availableDrivers}
+            assignableDrivers={assignableDrivers}
+            isDarkMode={isDarkMode}
+            optimizing={optimizing}
+            onCreateTrip={handleCreateTrip}
+            onStartTrip={handleStartTrip}
+            onReassignTripDriver={handleReassignTripDriver}
+            onReoptimizeTrip={handleReoptimizeTrip}
+            onCancelTrip={handleCancelTrip}
+            onCompleteDelivery={handleCompleteDelivery}
+            onFailDelivery={handleFailDelivery}
+          />
         </main>
       ) : activePage === 'products' ? (
         <main className="flex-1 max-w-[1600px] w-full mx-auto px-4 sm:px-6 py-5">

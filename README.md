@@ -98,9 +98,9 @@ doan/
 │       ├── controllers/
 │       │   ├── auth.controller.ts    # Login, Me, System Overview, Seed API
 │       │   ├── driver.controller.ts  # CRUD tài xế (User + DriverProfile), lọc trạng thái/loại xe & phân trang server
-│       │   ├── order.controller.ts   # Tạo/sửa đơn hàng, chuyển trạng thái, gán/đổi/bỏ gán tài xế trực tiếp & tự giải phóng tài xế
+│       │   ├── order.controller.ts   # Tạo/sửa đơn hàng, sắp xếp mặc định createdAt DESC, chuyển trạng thái & gán tài xế trực tiếp
 │       │   ├── product.controller.ts # CRUD sản phẩm, thống kê KPI & phân trang phía server
-│       │   └── trip.controller.ts    # Gọi Python OR-Tools Solver, gán tài xế & chuyển trạng thái ON_DELIVERY
+│       │   └── trip.controller.ts    # Tối ưu/tạo chuyến OR-Tools, xuất phát (IN_TRANSIT), đổi tài xế, tối ưu lại & hủy chuyến
 │       └── routes/
 │           ├── auth.routes.ts
 │           ├── driver.routes.ts
@@ -128,16 +128,18 @@ doan/
         ├── api/
         │   └── dmsApi.ts        # Axios client gọi REST API Backend (Orders, Trips, Products, Drivers)
         └── components/
-            ├── Header.tsx                # Top Bar: Chuyển trang Đơn hàng/Sản phẩm/Tài xế, Role, Theme, Seed/New
-            ├── OrderTable.tsx            # Action banner OR-Tools, TabList lọc trạng thái (gồm FAILED), cột Tài xế & bảng đơn
-            ├── OrderFormModal.tsx        # Hộp thoại Tạo/Sửa đơn hàng: Mini-map Leaflet + chọn sản phẩm danh mục
-            ├── AssignDriverModal.tsx     # Hộp thoại Astryx Dialog gán/đổi/bỏ gán tài xế trực tiếp cho từng đơn hàng
-            ├── RouteMap.tsx              # Bản đồ Leaflet OSM / CARTO Dark Matter theo theme
-            ├── ActiveTripPanel.tsx       # Chi tiết chuyến xe & danh sách điểm dừng tối ưu
-            ├── ProductManagementPage.tsx # Trang Quản lý Sản phẩm: KPI, tìm kiếm, lọc danh mục & phân trang server
-            ├── ProductFormModal.tsx      # Hộp thoại Astryx Dialog thêm/sửa sản phẩm trong kho
-            ├── DriverManagementPage.tsx  # Trang Quản lý Tài xế: KPI, tìm kiếm, lọc trạng thái/loại xe & phân trang server
-            └── DriverFormModal.tsx       # Hộp thoại Astryx Dialog thêm/sửa tài khoản & phương tiện tài xế
+            ├── Header.tsx                  # Top Bar: Chuyển trang Đơn hàng/Chuyến xe/Sản phẩm/Tài xế, Role, Theme, Seed/New
+            ├── OrderTable.tsx              # Trang chủ full-width: Bảng đơn hàng sắp xếp createdAt DESC, cột Ngày tạo, tìm kiếm & lọc trạng thái
+            ├── OrderFormModal.tsx          # Hộp thoại Tạo/Sửa đơn hàng: Mini-map Leaflet + chọn sản phẩm danh mục
+            ├── AssignDriverModal.tsx       # Hộp thoại Astryx Dialog gán/đổi/bỏ gán tài xế trực tiếp cho từng đơn hàng
+            ├── TripManagementPage.tsx      # Trang Quản lý Chuyến xe: KPI, master-detail danh sách chuyến, RouteMap & thao tác vòng đời chuyến
+            ├── CreateTripModal.tsx         # Hộp thoại chọn đơn PACKED & tài xế để tối ưu/tạo chuyến mới bằng Google OR-Tools
+            ├── ReassignTripDriverModal.tsx # Hộp thoại đổi tài xế phụ trách cho chuyến xe đang hoạt động
+            ├── RouteMap.tsx                # Bản đồ Leaflet OSM / CARTO Dark Matter hiển thị lộ trình chuyến đang chọn
+            ├── ProductManagementPage.tsx   # Trang Quản lý Sản phẩm: KPI, tìm kiếm, lọc danh mục & phân trang server
+            ├── ProductFormModal.tsx        # Hộp thoại Astryx Dialog thêm/sửa sản phẩm trong kho
+            ├── DriverManagementPage.tsx    # Trang Quản lý Tài xế: KPI, tìm kiếm, lọc trạng thái/loại xe & phân trang server
+            └── DriverFormModal.tsx         # Hộp thoại Astryx Dialog thêm/sửa tài khoản & phương tiện tài xế
 ```
 
 ---
@@ -321,7 +323,7 @@ model Product {
   - **10 Đơn hàng mẫu (`ORD-101` ➔ `ORD-110`)** có tọa độ GPS thực tế quanh khu vực Quận 7, Quận 4, Nhà Bè.
 
 #### Quản lý Đơn hàng
-- `GET /api/orders`: Danh sách đơn hàng (hỗ trợ lọc `?status=NEW|PICKING|PACKED|DELIVERING|COMPLETED|FAILED`).
+- `GET /api/orders`: Danh sách đơn hàng sắp xếp theo ngày tạo mới nhất (`createdAt DESC`, tie-breaker `id DESC`), hỗ trợ lọc `?status=NEW|PICKING|PACKED|DELIVERING|COMPLETED|FAILED`.
 - `GET /api/orders/:id`: Xem chi tiết đơn hàng và danh sách sản phẩm (`items`).
 - `POST /api/orders`: Tạo đơn hàng mới. Sản phẩm trong đơn phải được chọn từ danh mục `Product`; backend tự tra cứu `productName`, `sku`, `price` từ danh mục và tự tính `totalAmount`.
 - `PUT /api/orders/:id`: Chỉnh sửa đơn hàng (chỉ cho phép ở các trạng thái trước điều phối: `NEW`, `PICKING`, `PACKED`; trả về `400` nếu đơn đã `DELIVERING`, `COMPLETED` hoặc `FAILED`). Cập nhật thông tin khách hàng, tọa độ GPS và danh sách `OrderItem` (giữ nguyên `status`, tự tính lại `totalAmount`).
@@ -346,16 +348,20 @@ model Product {
 - `PUT /api/drivers/:id`: Cập nhật thông tin tài khoản, mật khẩu tùy chọn, phương tiện, trạng thái vận hành và cờ hoạt động `isActive`.
 - `DELETE /api/drivers/:id`: Chặn xóa (`400`) nếu tài xế đang có chuyến `ASSIGNED` hoặc `IN_TRANSIT`; với các chuyến đã hoàn tất, tự động gỡ liên kết (`Trip.driverId = null`) trước khi xóa `User` (cascade sang `DriverProfile`).
 
-#### Điều phối & Tối ưu Lộ trình (OR-Tools Integration)
+#### Quản lý Chuyến xe & Tối ưu Lộ trình (Trip Lifecycle & OR-Tools Integration)
+- `GET /api/trips`: Danh sách chuyến xe (sắp xếp mới nhất trước), kèm thông tin kho (`store`), tài xế + hồ sơ phương tiện (`driver.driverProfile`) và danh sách đơn theo `deliverySequence`; hỗ trợ lọc `?status=ASSIGNED|IN_TRANSIT|COMPLETED` và tìm kiếm `?search=`.
+- `GET /api/trips/my-active`: Lấy chuyến xe đang thực hiện (hoặc chuyến mới nhất).
 - `POST /api/trips/optimize`:
   - **Input:** `{ "storeId": 1, "orderIds": [1, 2, 3], "driverId": 3 }` (`driverId` tùy chọn — nếu bỏ trống sẽ ưu tiên tự động chọn tài xế `AVAILABLE` đang hoạt động).
   - **Luồng xử lý:**
     1. Truy vấn tọa độ Depot (`Store`), kiểm tra tài xế hợp lệ và lấy tọa độ các đơn hàng `PACKED` được chọn.
     2. Gọi `POST http://python-solver:8090/solve-vrp`.
     3. Nhận danh sách điểm dừng đã sắp xếp tối ưu (`sequence: 1, 2, 3...`) và tổng quãng đường (`total_distance_meters`).
-    4. Khởi tạo bản ghi `Trip`, cập nhật trạng thái tài xế sang `ON_DELIVERY`, cập nhật `tripId`, `deliverySequence` và chuyển trạng thái các đơn hàng sang `DELIVERING`.
-- `GET /api/trips`: Danh sách các chuyến xe.
-- `GET /api/trips/my-active`: Lấy chuyến xe đang thực hiện (hoặc chuyến mới nhất) để hiển thị lộ trình trên bản đồ.
+    4. Khởi tạo bản ghi `Trip` (`ASSIGNED`), cập nhật trạng thái tài xế sang `ON_DELIVERY`, cập nhật `tripId`, `deliverySequence` và chuyển trạng thái các đơn hàng sang `DELIVERING`.
+- `PATCH /api/trips/:id/start`: Chuyển trạng thái chuyến xe từ `ASSIGNED` ➔ `IN_TRANSIT` và đảm bảo tài xế ở trạng thái `ON_DELIVERY`.
+- `PATCH /api/trips/:id/driver`: Đổi tài xế cho chuyến chưa hoàn thành (`{ "driverId": 4 }`), chuyển tài xế mới sang `ON_DELIVERY` và giải phóng tài xế cũ về `AVAILABLE` nếu không còn chuyến hoạt động khác.
+- `POST /api/trips/:id/reoptimize`: Gọi lại Google OR-Tools VRP cho các đơn `DELIVERING` còn lại của chuyến xe, cập nhật lại `deliverySequence` và `totalDistance`.
+- `DELETE /api/trips/:id`: Hủy chuyến xe chưa hoàn thành — đưa toàn bộ đơn `DELIVERING` về trạng thái `PACKED` (`tripId: null, deliverySequence: null`), xóa chuyến (hoặc đóng `COMPLETED` nếu chuyến đã có đơn `COMPLETED`/`FAILED` để giữ lịch sử) và đồng bộ lại trạng thái tài xế về `AVAILABLE` nếu không còn chuyến hoạt động khác.
 
 #### Thực thi Giao hàng (Driver Execution)
 - `PATCH /api/orders/:id/complete-delivery`: Chuyển trạng thái đơn sang `COMPLETED` (tự động hoàn tất `Trip` khi toàn bộ đơn trong chuyến đã giao xong và tự động chuyển tài xế về `AVAILABLE` nếu không còn chuyến hoạt động khác).
@@ -404,31 +410,36 @@ model Product {
 
 ## 7. Đặc Tả Giao Diện Web Admin Dashboard
 
-Giao diện đơn trang (SPA) tại `http://localhost:5173` được xây dựng bằng **Meta Astryx Design System** (`@astryxdesign/core`, `@astryxdesign/theme-neutral`) kết hợp **Tailwind CSS v4** (qua Astryx Tailwind Bridge `@astryxdesign/core/tailwind-theme.css` và thứ tự `@layer` chuẩn), hỗ trợ đầy đủ **Light / System / Dark mode** và chia làm 3 khu vực trực quan:
+Giao diện đơn trang (SPA) tại `http://localhost:5173` được xây dựng bằng **Meta Astryx Design System** (`@astryxdesign/core`, `@astryxdesign/theme-neutral`) kết hợp **Tailwind CSS v4** (qua Astryx Tailwind Bridge `@astryxdesign/core/tailwind-theme.css` và thứ tự `@layer` chuẩn), hỗ trợ đầy đủ **Light / System / Dark mode** và gồm 4 trang quản lý chính:
 
 1. **Thanh Công Cụ Trên Cùng (Top Bar — `Header.tsx`):**
-   - **Page Switcher (`SegmentedControl`):** Chuyển đổi nhanh giữa 3 trang quản lý chính — **Đơn hàng** (`#orders`), **Sản phẩm** (`#products`) và **Tài xế** (`#drivers`), hiển thị tổng số lượng tương ứng.
+   - **Page Switcher (`SegmentedControl`):** Chuyển đổi nhanh giữa 4 trang quản lý — **Đơn hàng** (`#orders`, trang chủ), **Chuyến xe** (`#trips`), **Sản phẩm** (`#products`) và **Tài xế** (`#drivers`), hiển thị tổng số lượng tương ứng.
    - **Role Switcher (`Selector`):** Chuyển đổi tức thì giữa 3 vai trò (`Quản lý / Điều phối - ADMIN`, `Nhân viên Kho - WAREHOUSE`, `Tài xế Giao hàng - DRIVER`) mà không cần đăng xuất/đăng nhập lại.
    - **Theme Mode Switcher (`SegmentedControl`):** Chuyển đổi chế độ giao diện **Sáng / Hệ thống / Tối** (lưu trong `localStorage`), tự động đồng bộ toàn bộ token màu Astryx và lớp bản đồ Leaflet.
    - **Tạo đơn mới (`Button` + `Dialog`):** Mở hộp thoại thống nhất cho cả Tạo và Sửa đơn hàng (`OrderFormModal.tsx`).
    - **Seed 10 Sample Orders (`Button`):** Khôi phục/nạp nhanh 10 đơn hàng mẫu ở trạng thái `NEW` để bắt đầu buổi thuyết trình.
-2. **Bảng Điều Phối, Tạo, Chỉnh Sửa & Gán Tài Xế Đơn Hàng (`OrderTable.tsx`, `OrderFormModal.tsx` & `AssignDriverModal.tsx`):**
-   - Các tab lọc đơn hàng theo trạng thái (`TabList` / `Tab`, gồm cả tab `FAILED`) kèm số lượng thực tế và chọn tất cả đơn `PACKED` (`CheckboxInput` hỗ trợ trạng thái `indeterminate`).
-   - Nút tiện ích **"Đóng gói nhanh"** giúp chuyển nhanh các đơn `NEW`/`PICKING` sang `PACKED` khi muốn demo ngay thuật toán OR-Tools.
-   - Bộ chọn **Tài xế giao hàng (`Selector`)** hiển thị danh sách tài xế đang sẵn sàng (`AVAILABLE`) kèm loại xe & biển số (hoặc tự động chọn) ngay cạnh nút **"Tối ưu hóa lộ trình với Google OR-Tools"**.
-   - Bảng đơn hàng (`Table`, `Badge`, `Button`, `IconButton`) có thêm cột **Tài Xế** hiển thị tài xế đang phụ trách cùng nút **Gán tài xế / Đổi tài xế / Giao lại** (cho phép `ADMIN` và `WAREHOUSE` với đơn `PACKED`/`DELIVERING`/`FAILED`; `DRIVER` chỉ xem), nút **Chỉnh sửa đơn hàng** (`NEW`/`PICKING`/`PACKED`) và thông báo `useToast()`.
+2. **Trang Chủ — Quản Lý Đơn Hàng (`#orders`, `OrderTable.tsx`, `OrderFormModal.tsx` & `AssignDriverModal.tsx`):**
+   - Hiển thị **bảng đơn hàng toàn chiều rộng (full-width)**, sắp xếp mặc định theo **ngày tạo mới nhất (`createdAt DESC`)** với cột **Ngày Tạo** hiển thị rõ thời gian tạo đơn.
+   - Ô tìm kiếm nhanh theo mã đơn, tên khách hàng, SĐT, địa chỉ, mã chuyến hoặc tên tài xế, kết hợp các tab lọc trạng thái (`ALL`, `NEW`, `PICKING`, `PACKED`, `DELIVERING`, `COMPLETED`, `FAILED`).
+   - Nút tiện ích **"Đóng gói nhanh"** giúp chuyển nhanh các đơn `NEW`/`PICKING` sang `PACKED`.
+   - Bảng đơn hàng (`Table`, `Badge`, `Button`, `IconButton`) hiển thị mã đơn, mã chuyến/thứ tự dừng, ngày tạo, thông tin khách hàng, tổng tiền, trạng thái, tài xế phụ trách và các thao tác vòng đời đơn (chỉnh sửa, nhặt hàng, đóng gói, gán/đổi tài xế, giao thành công/thất bại).
    - **Hộp thoại Gán Tài Xế (`AssignDriverModal.tsx`):** Hiển thị tóm tắt đơn hàng, ô tìm kiếm tài xế theo tên/SĐT/biển số/loại xe, danh sách tài xế đủ điều kiện (ưu tiên `AVAILABLE` trước `ON_DELIVERY` kèm số đơn đang giao) và nút **"Bỏ gán tài xế"** khi đơn đang ở trạng thái `DELIVERING`.
    - **Hộp thoại Tạo/Sửa Đơn Hàng (`OrderFormModal.tsx`):**
      - Sử dụng cấu trúc Astryx `Dialog` + `Layout` (`LayoutContent` / `LayoutFooter`) để nút Lưu/Hủy luôn cố định ở chân hộp thoại.
      - **Bản đồ mini Leaflet tương tác:** Click lên bản đồ hoặc kéo ghim xanh để chọn tọa độ giao hàng, đồng bộ 2 chiều với ô nhập `Latitude` / `Longitude`.
      - **Chọn sản phẩm bắt buộc từ danh mục:** Ô tìm kiếm theo tên hoặc mã SKU gọi trực tiếp API danh mục sản phẩm đang kinh doanh; bấm **Thêm** để đưa vào đơn (tự tăng `Qty` nếu đã có).
      - **Bảng Order Item 4 cột:** `Tên sản phẩm`, `SKU`, `Giá` (chỉ đọc) và `Qty` (cột duy nhất cho phép sửa, kèm nút xóa dòng và tổng tiền tự tính).
-3. **Bản Đồ Lộ Trình Leaflet & Chi Tiết Chuyến Xe (Bên phải — `RouteMap.tsx` & `ActiveTripPanel.tsx`):**
-   - Tự động chuyển đổi tile bản đồ giữa **OpenStreetMap** (chế độ sáng) và **CARTO Dark Matter** (chế độ tối).
-   - Hiển thị Marker **Kho xuất phát (Depot)** màu đỏ (`🏪`).
-   - Hiển thị các điểm giao hàng bằng Marker tròn đánh số thứ tự dừng xe **`1, 2, 3...`** theo kết quả của Google OR-Tools.
-   - Vẽ đường nối **Polyline** từ `Depot ➔ Stop #1 ➔ Stop #2 ➔ Stop #3...`.
-   - Thẻ thông tin chuyến xe (`Card`) bên dưới bản đồ hiển thị mã chuyến (`TRIP-...`), tên tài xế, tổng quãng đường (`km`/`m`) và danh sách các điểm dừng theo thứ tự.
+3. **Trang Quản Lý Chuyến Xe (`#trips`, `TripManagementPage.tsx`, `CreateTripModal.tsx`, `ReassignTripDriverModal.tsx` & `RouteMap.tsx`):**
+   - **4 thẻ KPI tổng quan:** Tổng chuyến xe, Chờ xuất phát (`ASSIGNED`), Đang giao hàng (`IN_TRANSIT`), Hoàn thành (`COMPLETED`).
+   - **Bố cục Master-Detail 2 cột:**
+     - **Cột trái (Danh sách chuyến xe):** Ô tìm kiếm (mã chuyến, tài xế, biển số, mã đơn), tab lọc trạng thái (`ALL`, `ASSIGNED`, `IN_TRANSIT`, `COMPLETED`), nút **"Tạo chuyến mới"** mở `CreateTripModal.tsx` (chọn đơn `PACKED` + tài xế và chạy tối ưu Google OR-Tools VRP) và danh sách thẻ chuyến xe hiển thị tiến độ điểm giao & tổng quãng đường.
+     - **Cột phải (Bản đồ & Chi tiết chuyến đang chọn):**
+       - `RouteMap.tsx`: Tự động chuyển tile giữa **OpenStreetMap** (sáng) và **CARTO Dark Matter** (tối), hiển thị Depot (`🏪`), các Marker đánh số thứ tự dừng **`1, 2, 3...`** và đường nối **Polyline** `Depot ➔ Stop #1 ➔ Stop #2...`.
+       - Thanh thao tác vòng đời chuyến: **Bắt đầu giao** (`ASSIGNED` ➔ `IN_TRANSIT`), **Đổi tài xế** (`ReassignTripDriverModal.tsx`), **Tối ưu lại (OR-Tools)** cho các điểm `DELIVERING` còn lại, **Hủy chuyến** (có hộp thoại xác nhận, đưa đơn `DELIVERING` về `PACKED`), và nút **Giao xong / Thất bại** cho từng điểm dừng.
+   - **Phân quyền theo vai trò:**
+     - `ADMIN`: Toàn quyền tạo chuyến, bắt đầu giao, đổi tài xế, tối ưu lại, hủy chuyến và xác nhận giao/thất bại từng điểm dừng.
+     - `WAREHOUSE`: Xem chuyến xe và tạo/tối ưu chuyến mới từ các đơn `PACKED`.
+     - `DRIVER`: Xem chuyến xe, bấm **Bắt đầu giao** (`IN_TRANSIT`) và xác nhận **Giao xong / Thất bại** từng điểm dừng.
 4. **Trang Quản Lý Sản Phẩm (`ProductManagementPage.tsx` & `ProductFormModal.tsx`):**
    - **4 thẻ KPI tổng quan:** Tổng sản phẩm, Đang kinh doanh, Sắp hết hàng (`<= 10`), Tổng số lượng tồn kho (tính toàn kho từ API `summary`).
    - **Tìm kiếm & Lọc:** Tìm kiếm theo tên/SKU (debounce `250ms`) và lọc theo danh mục sản phẩm.
@@ -505,6 +516,17 @@ curl -X PATCH http://localhost:3000/api/orders/1/assign-driver \
 curl -X PATCH http://localhost:3000/api/orders/1/assign-driver \
   -H "Content-Type: application/json" \
   -d '{"driverId": null}'
+
+# 9. Quản lý vòng đời chuyến xe (bắt đầu giao, đổi tài xế, tối ưu lại, hủy chuyến)
+curl -X PATCH http://localhost:3000/api/trips/1/start
+
+curl -X PATCH http://localhost:3000/api/trips/1/driver \
+  -H "Content-Type: application/json" \
+  -d '{"driverId": 4}'
+
+curl -X POST http://localhost:3000/api/trips/1/reoptimize
+
+curl -X DELETE http://localhost:3000/api/trips/1
 ```
 
 #### Nạp nhanh 1.000 sản phẩm mẫu để kiểm thử phân trang:
@@ -544,22 +566,22 @@ npm run astryx -- component Button
 
 Thực hiện tuần tự 4 bước sau trên giao diện **`http://localhost:5173`**:
 
-1. **Bước 1 — Khởi tạo dữ liệu:**
-   - Mở Dashboard: Kho trung tâm (**Lotte Mart Quận 7 - Depot**) xử lý đơn hàng và giao chặng cuối (Last-mile delivery).
-   - Bấm nút **"Seed 10 Sample Orders"** trên góc phải ➔ 10 đơn hàng xuất hiện ở trạng thái `NEW` và hiển thị vị trí quanh kho trên bản đồ.
+1. **Bước 1 — Khởi tạo dữ liệu (Trang Chủ `#orders`):**
+   - Mở Dashboard: Trang chủ hiển thị danh sách đơn hàng toàn chiều rộng, sắp xếp mặc định theo **ngày tạo mới nhất (`createdAt DESC`)**.
+   - Bấm nút **"Seed 10 Sample Orders"** trên góc phải ➔ 10 đơn hàng xuất hiện ở trạng thái `NEW` kèm cột **Ngày Tạo**.
 
 2. **Bước 2 — Nghiệp vụ Kho (Warehouse Fulfillment):**
-   - Chọn vai trò **"📦 Nhân viên Kho (WAREHOUSE)"** trên thanh công cụ.
+   - Chọn vai trò **"Nhân viên Kho (WAREHOUSE)"** trên thanh công cụ.
    - Bấm **"Bắt đầu nhặt hàng"** trên một vài đơn ➔ Trạng thái chuyển sang `PICKING`.
    - Bấm **"Đóng gói xong"** (hoặc bấm nút **"Đóng gói nhanh"**) ➔ Trạng thái chuyển sang `PACKED`.
 
-3. **Bước 3 — Điểm nhấn Thuật toán Google OR-Tools VRP:**
-   - Chuyển vai trò sang **"👑 Quản lý / Điều phối (ADMIN)"**.
-   - Tick chọn các đơn hàng `PACKED` và bấm nút **"⚡ Tối ưu hóa lộ trình với Google OR-Tools"**.
+3. **Bước 3 — Tạo & Quản Lý Chuyến Xe với Google OR-Tools VRP (Trang `#trips`):**
+   - Chuyển sang tab **"Chuyến xe"** trên thanh công cụ và chọn vai trò **"Quản lý / Điều phối (ADMIN)"** (hoặc `WAREHOUSE`).
+   - Bấm **"Tạo chuyến mới"**, chọn các đơn `PACKED` cùng tài xế phụ trách và bấm **"Tối ưu & Tạo chuyến"**.
    - Giải thích: Backend gửi tọa độ Kho và các đơn hàng sang micro-service Python FastAPI chạy thuật toán **Google OR-Tools** để tìm hành trình ngắn nhất.
-   - Quan sát trên bản đồ Leaflet: Hệ thống tự động đánh số thứ tự giao hàng `#1, #2, #3...`, vẽ đường nối lộ trình Polyline và hiển thị tổng quãng đường di chuyển tối ưu.
+   - Quan sát trên bản đồ Leaflet bên phải: Hệ thống tự động đánh số thứ tự giao hàng `#1, #2, #3...`, vẽ đường nối lộ trình Polyline và hiển thị tổng quãng đường di chuyển tối ưu. Với vai trò `ADMIN`, có thể thao tác thêm **Đổi tài xế**, **Tối ưu lại (OR-Tools)** hoặc **Hủy chuyến**.
 
 4. **Bước 4 — Tài xế Giao hàng Chặng cuối (Driver Execution):**
-   - Chuyển vai trò sang **"🛵 Tài xế Giao hàng (DRIVER)"**.
-   - Xem danh sách điểm dừng đã được sắp xếp theo đúng thứ tự `Stop #1, Stop #2, Stop #3...`.
-   - Bấm **"Giao thành công"** cho từng đơn theo thứ tự lộ trình ➔ Trạng thái đơn chuyển sang `COMPLETED` (màu xanh lá trên cả bảng và bản đồ) và chuyến xe tự động hoàn tất.
+   - Chuyển vai trò sang **"Tài xế Giao hàng (DRIVER)"** tại trang **Chuyến xe**.
+   - Bấm **"Bắt đầu giao"** để chuyển chuyến từ `ASSIGNED` sang `IN_TRANSIT`, xem danh sách điểm dừng theo đúng thứ tự `#1, #2, #3...`.
+   - Bấm **"Giao xong"** (hoặc **Giao thất bại**) cho từng đơn theo thứ tự lộ trình ➔ Trạng thái đơn cập nhật ngay trên bảng & bản đồ và chuyến xe tự động hoàn tất khi xử lý hết điểm dừng.

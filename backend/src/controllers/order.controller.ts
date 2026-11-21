@@ -158,7 +158,7 @@ export const getOrders = async (req: Request, res: Response) => {
     const orders = await prisma.order.findMany({
       where: whereClause,
       include: ORDER_WITH_RELATIONS_INCLUDE,
-      orderBy: [{ deliverySequence: 'asc' }, { id: 'asc' }],
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     });
     res.json({ success: true, data: orders });
   } catch (error: any) {

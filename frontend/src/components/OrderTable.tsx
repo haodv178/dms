@@ -1,12 +1,13 @@
 import {
   CheckCircle2,
+  Clock,
   Layers,
   MapPin,
   Navigation,
   Package,
   Pencil,
+  Search,
   ShoppingBag,
-  Sparkles,
   Truck,
   UserPlus,
   XCircle,
@@ -14,10 +15,8 @@ import {
 import { Badge } from '@astryxdesign/core/Badge';
 import { Button } from '@astryxdesign/core/Button';
 import { Card } from '@astryxdesign/core/Card';
-import { CheckboxInput } from '@astryxdesign/core/CheckboxInput';
 import { Heading } from '@astryxdesign/core/Heading';
 import { IconButton } from '@astryxdesign/core/IconButton';
-import { Selector } from '@astryxdesign/core/Selector';
 import { Stack } from '@astryxdesign/core/Stack';
 import { Tab, TabList } from '@astryxdesign/core/TabList';
 import {
@@ -29,15 +28,16 @@ import {
   TableRow,
 } from '@astryxdesign/core/Table';
 import { Text } from '@astryxdesign/core/Text';
+import { TextInput } from '@astryxdesign/core/TextInput';
 import {
   STATUS_CONFIG,
   STATUS_TABS,
   canRoleAssignDriver,
   canRoleEditOrders,
+  formatDateTime,
   formatVND,
   isOrderAssignable,
   isOrderEditable,
-  type Driver,
   type Order,
   type Role,
 } from '../types/dms';
@@ -45,20 +45,13 @@ import {
 interface OrderTableProps {
   role: Role;
   filteredOrders: Order[];
-  packedOrdersCount: number;
   counts: Record<string, number>;
   statusFilter: string;
   onStatusFilterChange: (status: string) => void;
-  selectedOrderIds: number[];
-  onToggleSelectOrder: (id: number) => void;
-  onToggleSelectAllPacked: () => void;
-  availableDrivers: Driver[];
-  selectedDriverId: string;
-  onSelectedDriverIdChange: (driverId: string) => void;
+  searchQuery: string;
+  onSearchQueryChange: (query: string) => void;
   loading: boolean;
-  optimizing: boolean;
   onBatchPreparePacked: () => void;
-  onOptimizeRoute: () => void;
   onEditOrder: (order: Order) => void;
   onOpenAssignDriver: (order: Order) => void;
   onStartPicking: (id: number) => void;
@@ -70,20 +63,13 @@ interface OrderTableProps {
 export function OrderTable({
   role,
   filteredOrders,
-  packedOrdersCount,
   counts,
   statusFilter,
   onStatusFilterChange,
-  selectedOrderIds,
-  onToggleSelectOrder,
-  onToggleSelectAllPacked,
-  availableDrivers,
-  selectedDriverId,
-  onSelectedDriverIdChange,
+  searchQuery,
+  onSearchQueryChange,
   loading,
-  optimizing,
   onBatchPreparePacked,
-  onOptimizeRoute,
   onEditOrder,
   onOpenAssignDriver,
   onStartPicking,
@@ -92,55 +78,38 @@ export function OrderTable({
   onFailDelivery,
 }: OrderTableProps) {
   const newAndPickingCount = (counts.NEW ?? 0) + (counts.PICKING ?? 0);
-  const allPackedSelected =
-    packedOrdersCount > 0 && selectedOrderIds.length === packedOrdersCount;
-  const somePackedSelected =
-    selectedOrderIds.length > 0 && selectedOrderIds.length < packedOrdersCount;
-
-  const driverOptions = [
-    {
-      value: 'AUTO',
-      label:
-        availableDrivers.length > 0
-          ? `Tự động chọn tài xế (${availableDrivers.length} sẵn sàng)`
-          : 'Tự động chọn tài xế',
-    },
-    ...availableDrivers.map((d) => ({
-      value: String(d.id),
-      label: `${d.name} • ${d.vehicleType} (${d.licensePlate})`,
-    })),
-  ];
 
   return (
-    <section className="lg:col-span-7 flex flex-col gap-4">
-      {/* Action Banner for OR-Tools & Quick Warehouse Prep */}
+    <section className="flex flex-col gap-4">
+      {/* Header & Quick Warehouse Prep */}
       <Card padding={4}>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-col gap-1">
             <div className="flex items-center gap-2">
               <Layers className="w-4 h-4 text-accent" />
               <Heading level={4} accessibilityLevel={2}>
-                Bảng Điều Phối &amp; Quản Lý Vòng Đời Đơn Hàng
+                Danh Sách Đơn Hàng
               </Heading>
+              <Badge label={`${filteredOrders.length} đơn`} variant="neutral" />
             </div>
             <Text type="supporting" size="xsm">
-              Đã chọn{' '}
-              <Text type="label" size="xsm" color="accent" hasTabularNumbers>
-                {selectedOrderIds.length}
-              </Text>{' '}
-              /{' '}
-              <Text type="label" size="xsm" color="primary" hasTabularNumbers>
-                {packedOrdersCount}
-              </Text>{' '}
-              đơn hàng{' '}
-              <Text type="code" size="xsm">
-                PACKED
-              </Text>{' '}
-              sẵn sàng tối ưu lộ trình.
+              Sắp xếp mặc định theo ngày tạo mới nhất (mới nhất ở trên cùng).
             </Text>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <div className="w-72">
+              <TextInput
+                label="Tìm kiếm đơn hàng"
+                isLabelHidden
+                placeholder="Tìm mã đơn, khách hàng, SĐT, tài xế..."
+                value={searchQuery}
+                onChange={onSearchQueryChange}
+                startIcon={<Search className="w-4 h-4" />}
+                size="sm"
+              />
+            </div>
+
             {newAndPickingCount > 0 && (
               <Button
                 label={`Đóng gói nhanh (${newAndPickingCount} đơn)`}
@@ -148,38 +117,10 @@ export function OrderTable({
                 size="sm"
                 icon={<Package className="w-3.5 h-3.5" />}
                 isLoading={loading}
-                tooltip="Tự động Nhặt & Đóng gói toàn bộ đơn NEW/PICKING để test nhanh OR-Tools"
+                tooltip="Tự động Nhặt & Đóng gói toàn bộ đơn NEW/PICKING"
                 onClick={onBatchPreparePacked}
               />
             )}
-
-            <Selector
-              label="Chọn tài xế giao hàng"
-              isLabelHidden
-              variant="secondary"
-              size="sm"
-              width={250}
-              startIcon={<Truck className="w-3.5 h-3.5" />}
-              options={driverOptions}
-              value={selectedDriverId}
-              onChange={(val) => onSelectedDriverIdChange(val as string)}
-            />
-
-            <Button
-              label={
-                optimizing
-                  ? 'Đang giải VRP với OR-Tools...'
-                  : `Tối ưu hóa lộ trình với Google OR-Tools (${
-                      selectedOrderIds.length > 0 ? selectedOrderIds.length : packedOrdersCount
-                    })`
-              }
-              variant="primary"
-              size="sm"
-              icon={<Sparkles className="w-4 h-4" />}
-              isLoading={optimizing}
-              isDisabled={packedOrdersCount === 0}
-              onClick={onOptimizeRoute}
-            />
           </div>
         </div>
       </Card>
@@ -207,42 +148,23 @@ export function OrderTable({
                 />
               ))}
             </TabList>
-
-            {packedOrdersCount > 0 && (
-              <div className="py-1.5">
-                <CheckboxInput
-                  size="sm"
-                  label={`Chọn tất cả PACKED (${packedOrdersCount})`}
-                  value={
-                    allPackedSelected
-                      ? true
-                      : somePackedSelected
-                        ? 'indeterminate'
-                        : false
-                  }
-                  onChange={onToggleSelectAllPacked}
-                />
-              </div>
-            )}
           </div>
 
           <div className="overflow-x-auto">
             {filteredOrders.length === 0 ? (
               <div className="py-12 px-4 text-center">
                 <Text type="supporting" size="sm">
-                  Không có đơn hàng nào trong trạng thái này. Hãy bấm{' '}
-                  <Text type="label" size="sm" color="primary">
-                    &quot;Seed 10 Sample Orders&quot;
-                  </Text>{' '}
-                  trên thanh công cụ.
+                  {searchQuery.trim()
+                    ? 'Không tìm thấy đơn hàng nào khớp với từ khóa tìm kiếm.'
+                    : 'Không có đơn hàng nào trong trạng thái này. Hãy tạo đơn mới hoặc bấm "Seed 10 Sample Orders" trên thanh công cụ.'}
                 </Text>
               </div>
             ) : (
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHeaderCell>Chọn</TableHeaderCell>
-                    <TableHeaderCell>Mã Đơn / Thứ Tự</TableHeaderCell>
+                    <TableHeaderCell>Mã Đơn / Chuyến</TableHeaderCell>
+                    <TableHeaderCell>Ngày Tạo</TableHeaderCell>
                     <TableHeaderCell>Khách Hàng &amp; Địa Chỉ</TableHeaderCell>
                     <TableHeaderCell>Tổng Tiền</TableHeaderCell>
                     <TableHeaderCell>Trạng Thái</TableHeaderCell>
@@ -252,49 +174,54 @@ export function OrderTable({
                 </TableHeader>
                 <TableBody>
                   {filteredOrders.map((order) => {
-                    const isPacked = order.status === 'PACKED';
-                    const isChecked = selectedOrderIds.includes(order.id);
                     const statusMeta = STATUS_CONFIG[order.status];
+                    const assignedDriver = order.trip?.driver ?? null;
+                    const canAssign =
+                      canRoleAssignDriver(role) && isOrderAssignable(order.status);
+                    const assignLabel =
+                      order.status === 'FAILED'
+                        ? 'Giao lại'
+                        : assignedDriver
+                          ? 'Đổi tài xế'
+                          : 'Gán tài xế';
 
                     return (
                       <TableRow key={order.id}>
-                        <TableCell>
-                          <CheckboxInput
-                            size="sm"
-                            label={`Chọn đơn ${order.orderCode}`}
-                            isLabelHidden
-                            isDisabled={!isPacked}
-                            disabledMessage={
-                              !isPacked
-                                ? 'Chỉ có thể chọn đơn ở trạng thái PACKED để tối ưu lộ trình'
-                                : undefined
-                            }
-                            value={isChecked}
-                            onChange={() => onToggleSelectOrder(order.id)}
-                          />
-                        </TableCell>
-
                         <TableCell>
                           <div className="flex flex-col gap-1 whitespace-nowrap">
                             <Text type="label" size="sm">
                               {order.orderCode}
                             </Text>
-                            {order.deliverySequence ? (
-                              <Badge
-                                label={`Stop #${order.deliverySequence}`}
-                                variant="purple"
-                                icon={<Navigation className="w-3 h-3" />}
-                              />
-                            ) : (
-                              <Text type="supporting" size="2xs" hasTabularNumbers>
-                                ID: #{order.id}
-                              </Text>
-                            )}
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              {order.trip?.tripCode && (
+                                <Badge label={order.trip.tripCode} variant="blue" />
+                              )}
+                              {order.deliverySequence ? (
+                                <Badge
+                                  label={`Stop #${order.deliverySequence}`}
+                                  variant="purple"
+                                  icon={<Navigation className="w-3 h-3" />}
+                                />
+                              ) : (
+                                <Text type="supporting" size="2xs" hasTabularNumbers>
+                                  ID: #{order.id}
+                                </Text>
+                              )}
+                            </div>
                           </div>
                         </TableCell>
 
                         <TableCell>
-                          <div className="flex flex-col gap-0.5 max-w-xs">
+                          <div className="inline-flex items-center gap-1.5 whitespace-nowrap">
+                            <Clock className="w-3.5 h-3.5 text-secondary shrink-0" />
+                            <Text type="supporting" size="xsm" hasTabularNumbers>
+                              {formatDateTime(order.createdAt)}
+                            </Text>
+                          </div>
+                        </TableCell>
+
+                        <TableCell>
+                          <div className="flex flex-col gap-0.5 max-w-md">
                             <div className="flex items-center gap-1 flex-wrap">
                               <Text type="label" size="sm">
                                 {order.customerName}
@@ -336,52 +263,38 @@ export function OrderTable({
                         </TableCell>
 
                         <TableCell>
-                          {(() => {
-                            const assignedDriver = order.trip?.driver ?? null;
-                            const canAssign =
-                              canRoleAssignDriver(role) && isOrderAssignable(order.status);
-                            const assignLabel =
-                              order.status === 'FAILED'
-                                ? 'Giao lại'
-                                : assignedDriver
-                                  ? 'Đổi tài xế'
-                                  : 'Gán tài xế';
-
-                            return (
-                              <Stack direction="vertical" gap={1} className="whitespace-nowrap">
-                                {assignedDriver ? (
-                                  <Stack direction="vertical" gap={0.5}>
-                                    <Stack direction="horizontal" align="center" gap={1}>
-                                      <Truck className="w-3.5 h-3.5 text-accent shrink-0" />
-                                      <Text type="label" size="xsm">
-                                        {assignedDriver.name}
-                                      </Text>
-                                    </Stack>
-                                    {assignedDriver.driverProfile?.licensePlate && (
-                                      <Text type="supporting" size="2xs">
-                                        {assignedDriver.driverProfile.vehicleType} •{' '}
-                                        {assignedDriver.driverProfile.licensePlate}
-                                      </Text>
-                                    )}
-                                  </Stack>
-                                ) : (
-                                  <Text type="supporting" size="xsm">
-                                    Chưa gán
+                          <Stack direction="vertical" gap={1} className="whitespace-nowrap">
+                            {assignedDriver ? (
+                              <Stack direction="vertical" gap={0.5}>
+                                <Stack direction="horizontal" align="center" gap={1}>
+                                  <Truck className="w-3.5 h-3.5 text-accent shrink-0" />
+                                  <Text type="label" size="xsm">
+                                    {assignedDriver.name}
+                                  </Text>
+                                </Stack>
+                                {assignedDriver.driverProfile?.licensePlate && (
+                                  <Text type="supporting" size="2xs">
+                                    {assignedDriver.driverProfile.vehicleType} •{' '}
+                                    {assignedDriver.driverProfile.licensePlate}
                                   </Text>
                                 )}
-
-                                {canAssign && (
-                                  <Button
-                                    label={assignLabel}
-                                    variant={assignedDriver ? 'secondary' : 'primary'}
-                                    size="sm"
-                                    icon={<UserPlus className="w-3.5 h-3.5" />}
-                                    onClick={() => onOpenAssignDriver(order)}
-                                  />
-                                )}
                               </Stack>
-                            );
-                          })()}
+                            ) : (
+                              <Text type="supporting" size="xsm">
+                                Chưa gán
+                              </Text>
+                            )}
+
+                            {canAssign && (
+                              <Button
+                                label={assignLabel}
+                                variant={assignedDriver ? 'secondary' : 'primary'}
+                                size="sm"
+                                icon={<UserPlus className="w-3.5 h-3.5" />}
+                                onClick={() => onOpenAssignDriver(order)}
+                              />
+                            )}
+                          </Stack>
                         </TableCell>
 
                         <TableCell>
@@ -416,14 +329,9 @@ export function OrderTable({
                             )}
 
                             {order.status === 'PACKED' && (
-                              <Button
-                                label={
-                                  isChecked ? 'Đã chọn điều phối' : 'Chọn vào chuyến'
-                                }
-                                variant={isChecked ? 'primary' : 'secondary'}
-                                size="sm"
-                                onClick={() => onToggleSelectOrder(order.id)}
-                              />
+                              <Text type="supporting" size="xsm">
+                                Sẵn sàng tạo chuyến
+                              </Text>
                             )}
 
                             {order.status === 'DELIVERING' && (
