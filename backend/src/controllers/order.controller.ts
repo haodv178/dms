@@ -378,30 +378,33 @@ export const completePacking = async (req: Request, res: Response) => {
   }
 };
 
-async function checkAndCompleteTrip(tripId: number | null) {
+async function checkAndCompleteTrip(
+  tripId: number | null,
+  db: Prisma.TransactionClient | typeof prisma = prisma
+) {
   if (!tripId) return;
-  const remainingDelivering = await prisma.order.count({
+  const remainingDelivering = await db.order.count({
     where: {
       tripId,
       status: OrderStatus.DELIVERING,
     },
   });
   if (remainingDelivering === 0) {
-    const completedTrip = await prisma.trip.update({
+    const completedTrip = await db.trip.update({
       where: { id: tripId },
       data: { status: 'COMPLETED' },
       select: { driverId: true },
     });
 
     if (completedTrip.driverId) {
-      const otherActiveTrips = await prisma.trip.count({
+      const otherActiveTrips = await db.trip.count({
         where: {
           driverId: completedTrip.driverId,
           status: { in: ['ASSIGNED', 'IN_TRANSIT'] },
         },
       });
       if (otherActiveTrips === 0) {
-        await prisma.driverProfile.updateMany({
+        await db.driverProfile.updateMany({
           where: {
             userId: completedTrip.driverId,
             isActive: true,
@@ -411,7 +414,7 @@ async function checkAndCompleteTrip(tripId: number | null) {
       }
     }
   } else {
-    await prisma.trip.update({
+    await db.trip.update({
       where: { id: tripId },
       data: { status: 'IN_TRANSIT' },
     });
@@ -687,6 +690,389 @@ export const assignDriverToOrder = async (req: Request, res: Response) => {
       success: true,
       message: actionText,
       data: updatedOrder,
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+type BulkOrderActionType =
+  | 'START_PICKING'
+  | 'COMPLETE_PACKING'
+  | 'ASSIGN_DRIVER'
+  | 'UNASSIGN_DRIVER'
+  | 'COMPLETE_DELIVERY'
+  | 'FAIL_DELIVERY';
+
+const VALID_BULK_ACTIONS: readonly BulkOrderActionType[] = [
+  'START_PICKING',
+  'COMPLETE_PACKING',
+  'ASSIGN_DRIVER',
+  'UNASSIGN_DRIVER',
+  'COMPLETE_DELIVERY',
+  'FAIL_DELIVERY',
+];
+
+interface BulkSkippedOrder {
+  id: number;
+  orderCode: string | null;
+  reason: string;
+}
+
+export const bulkOrderAction = async (req: Request, res: Response) => {
+  try {
+    const rawAction = req.body?.action;
+    const rawOrderIds = req.body?.orderIds;
+    const rawDriverId = req.body?.driverId;
+
+    if (
+      typeof rawAction !== 'string' ||
+      !VALID_BULK_ACTIONS.includes(rawAction as BulkOrderActionType)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: `Thao tác hàng loạt không hợp lệ. Hỗ trợ: ${VALID_BULK_ACTIONS.join(', ')}.`,
+      });
+    }
+    const action = rawAction as BulkOrderActionType;
+
+    if (!Array.isArray(rawOrderIds) || rawOrderIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Vui lòng chọn ít nhất 1 đơn hàng để thực hiện thao tác hàng loạt.',
+      });
+    }
+
+    const uniqueOrderIds = Array.from(
+      new Set(
+        rawOrderIds
+          .map((id) => Number(id))
+          .filter((id) => Number.isInteger(id) && id > 0)
+      )
+    );
+
+    if (uniqueOrderIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Danh sách ID đơn hàng không hợp lệ.',
+      });
+    }
+
+    let targetDriver: {
+      id: number;
+      name: string;
+      driverProfile: { isActive: boolean; status: DriverStatus } | null;
+    } | null = null;
+
+    if (action === 'ASSIGN_DRIVER') {
+      const parsedDriverId = Number(rawDriverId);
+      if (!Number.isInteger(parsedDriverId) || parsedDriverId <= 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Vui lòng chọn tài xế hợp lệ để gán hàng loạt.',
+        });
+      }
+
+      targetDriver = await prisma.user.findFirst({
+        where: { id: parsedDriverId, role: Role.DRIVER },
+        select: {
+          id: true,
+          name: true,
+          driverProfile: {
+            select: {
+              isActive: true,
+              status: true,
+            },
+          },
+        },
+      });
+
+      if (!targetDriver) {
+        return res.status(404).json({
+          success: false,
+          message: 'Không tìm thấy tài xế được chọn.',
+        });
+      }
+      if (targetDriver.driverProfile && !targetDriver.driverProfile.isActive) {
+        return res.status(400).json({
+          success: false,
+          message: `Tài xế "${targetDriver.name}" hiện đang ngừng hoạt động.`,
+        });
+      }
+      if (
+        targetDriver.driverProfile &&
+        targetDriver.driverProfile.status === DriverStatus.OFFLINE
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: `Tài xế "${targetDriver.name}" đang ngoại tuyến (OFFLINE), không thể gán đơn hàng.`,
+        });
+      }
+    }
+
+    const foundOrders = await prisma.order.findMany({
+      where: { id: { in: uniqueOrderIds } },
+      include: ORDER_WITH_RELATIONS_INCLUDE,
+    });
+    const orderById = new Map(foundOrders.map((o) => [o.id, o]));
+
+    const eligibleOrders: typeof foundOrders = [];
+    const skipped: BulkSkippedOrder[] = [];
+
+    for (const id of uniqueOrderIds) {
+      const order = orderById.get(id);
+      if (!order) {
+        skipped.push({
+          id,
+          orderCode: null,
+          reason: 'Không tìm thấy đơn hàng',
+        });
+        continue;
+      }
+
+      switch (action) {
+        case 'START_PICKING':
+          if (order.status === OrderStatus.NEW) {
+            eligibleOrders.push(order);
+          } else {
+            skipped.push({
+              id: order.id,
+              orderCode: order.orderCode,
+              reason: `Trạng thái hiện tại là ${order.status} (chỉ hỗ trợ NEW)`,
+            });
+          }
+          break;
+
+        case 'COMPLETE_PACKING':
+          if (order.status === OrderStatus.PICKING) {
+            eligibleOrders.push(order);
+          } else {
+            skipped.push({
+              id: order.id,
+              orderCode: order.orderCode,
+              reason: `Trạng thái hiện tại là ${order.status} (chỉ hỗ trợ PICKING)`,
+            });
+          }
+          break;
+
+        case 'ASSIGN_DRIVER':
+          if (!ASSIGNABLE_ORDER_STATUSES.includes(order.status)) {
+            skipped.push({
+              id: order.id,
+              orderCode: order.orderCode,
+              reason: `Trạng thái hiện tại là ${order.status} (chỉ hỗ trợ PACKED, DELIVERING, FAILED)`,
+            });
+          } else if (
+            order.status === OrderStatus.DELIVERING &&
+            order.trip?.driverId === targetDriver!.id
+          ) {
+            skipped.push({
+              id: order.id,
+              orderCode: order.orderCode,
+              reason: `Đã được gán cho tài xế ${targetDriver!.name}`,
+            });
+          } else {
+            eligibleOrders.push(order);
+          }
+          break;
+
+        case 'UNASSIGN_DRIVER':
+          if (order.status === OrderStatus.DELIVERING) {
+            eligibleOrders.push(order);
+          } else {
+            skipped.push({
+              id: order.id,
+              orderCode: order.orderCode,
+              reason: `Trạng thái hiện tại là ${order.status} (chỉ hỗ trợ DELIVERING)`,
+            });
+          }
+          break;
+
+        case 'COMPLETE_DELIVERY':
+        case 'FAIL_DELIVERY':
+          if (order.status === OrderStatus.DELIVERING) {
+            eligibleOrders.push(order);
+          } else {
+            skipped.push({
+              id: order.id,
+              orderCode: order.orderCode,
+              reason: `Trạng thái hiện tại là ${order.status} (chỉ hỗ trợ DELIVERING)`,
+            });
+          }
+          break;
+      }
+    }
+
+    if (eligibleOrders.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Không có đơn hàng nào đủ điều kiện để thực hiện thao tác này.',
+        data: {
+          updatedCount: 0,
+          updatedOrders: [],
+          skipped,
+        },
+      });
+    }
+
+    const eligibleIds = eligibleOrders.map((o) => o.id);
+
+    const updatedOrders = await prisma.$transaction(async (tx) => {
+      if (action === 'START_PICKING') {
+        await tx.order.updateMany({
+          where: { id: { in: eligibleIds } },
+          data: { status: OrderStatus.PICKING },
+        });
+      } else if (action === 'COMPLETE_PACKING') {
+        await tx.order.updateMany({
+          where: { id: { in: eligibleIds } },
+          data: { status: OrderStatus.PACKED },
+        });
+      } else if (action === 'COMPLETE_DELIVERY' || action === 'FAIL_DELIVERY') {
+        const nextStatus =
+          action === 'COMPLETE_DELIVERY' ? OrderStatus.COMPLETED : OrderStatus.FAILED;
+        await tx.order.updateMany({
+          where: { id: { in: eligibleIds } },
+          data: { status: nextStatus },
+        });
+
+        const affectedTripIds = Array.from(
+          new Set(
+            eligibleOrders
+              .map((o) => o.tripId)
+              .filter((tripId): tripId is number => tripId !== null)
+          )
+        );
+        for (const tripId of affectedTripIds) {
+          await checkAndCompleteTrip(tripId, tx);
+        }
+      } else if (action === 'UNASSIGN_DRIVER') {
+        const oldTripIds = Array.from(
+          new Set(
+            eligibleOrders
+              .map((o) => o.tripId)
+              .filter((tripId): tripId is number => tripId !== null)
+          )
+        );
+
+        await tx.order.updateMany({
+          where: { id: { in: eligibleIds } },
+          data: {
+            tripId: null,
+            deliverySequence: null,
+            status: OrderStatus.PACKED,
+          },
+        });
+
+        for (const oldTripId of oldTripIds) {
+          await cleanupTripAfterOrderRemoval(tx, oldTripId);
+        }
+      } else if (action === 'ASSIGN_DRIVER' && targetDriver) {
+        let targetTrip = await tx.trip.findFirst({
+          where: {
+            driverId: targetDriver.id,
+            status: { in: ['ASSIGNED', 'IN_TRANSIT'] },
+          },
+          orderBy: { createdAt: 'desc' },
+        });
+
+        let nextSequence = 0;
+        let resolvedTripId: number;
+
+        if (targetTrip) {
+          const maxSeqAgg = await tx.order.aggregate({
+            where: { tripId: targetTrip.id },
+            _max: { deliverySequence: true },
+          });
+          nextSequence = maxSeqAgg._max.deliverySequence ?? 0;
+
+          await tx.trip.update({
+            where: { id: targetTrip.id },
+            data: { totalDistance: null },
+          });
+          resolvedTripId = targetTrip.id;
+        } else {
+          const suffix = `${Date.now().toString().slice(-6)}${Math.floor(Math.random() * 10)}`;
+          const createdTrip = await tx.trip.create({
+            data: {
+              tripCode: `TRIP-${suffix}`,
+              storeId: eligibleOrders[0].storeId,
+              driverId: targetDriver.id,
+              status: 'ASSIGNED',
+              totalDistance: null,
+            },
+          });
+          resolvedTripId = createdTrip.id;
+        }
+
+        const oldTripIdsToCleanup = new Set<number>();
+
+        for (const order of eligibleOrders) {
+          const isRetrySameTrip =
+            order.status === OrderStatus.FAILED &&
+            order.tripId === resolvedTripId;
+
+          if (isRetrySameTrip) {
+            const seq = order.deliverySequence ?? ++nextSequence;
+            await tx.order.update({
+              where: { id: order.id },
+              data: {
+                status: OrderStatus.DELIVERING,
+                deliverySequence: seq,
+              },
+            });
+          } else {
+            nextSequence += 1;
+            await tx.order.update({
+              where: { id: order.id },
+              data: {
+                tripId: resolvedTripId,
+                deliverySequence: nextSequence,
+                status: OrderStatus.DELIVERING,
+              },
+            });
+            if (order.tripId && order.tripId !== resolvedTripId) {
+              oldTripIdsToCleanup.add(order.tripId);
+            }
+          }
+        }
+
+        for (const oldTripId of oldTripIdsToCleanup) {
+          await cleanupTripAfterOrderRemoval(tx, oldTripId);
+        }
+
+        await tx.driverProfile.updateMany({
+          where: { userId: targetDriver.id },
+          data: { status: DriverStatus.ON_DELIVERY },
+        });
+      }
+
+      return tx.order.findMany({
+        where: { id: { in: eligibleIds } },
+        include: ORDER_WITH_RELATIONS_INCLUDE,
+      });
+    });
+
+    const skippedSuffix =
+      skipped.length > 0 ? ` (bỏ qua ${skipped.length} đơn không đủ điều kiện)` : '';
+
+    const actionMessageMap: Record<BulkOrderActionType, string> = {
+      START_PICKING: `Đã chuyển ${updatedOrders.length} đơn sang Đang nhặt (PICKING)${skippedSuffix}.`,
+      COMPLETE_PACKING: `Đã đóng gói xong ${updatedOrders.length} đơn (PACKED)${skippedSuffix}.`,
+      ASSIGN_DRIVER: `Đã gán tài xế ${targetDriver?.name ?? ''} cho ${updatedOrders.length} đơn hàng${skippedSuffix}.`,
+      UNASSIGN_DRIVER: `Đã bỏ gán tài xế cho ${updatedOrders.length} đơn và đưa về trạng thái PACKED${skippedSuffix}.`,
+      COMPLETE_DELIVERY: `Đã xác nhận giao thành công ${updatedOrders.length} đơn hàng${skippedSuffix}.`,
+      FAIL_DELIVERY: `Đã đánh dấu giao thất bại ${updatedOrders.length} đơn hàng${skippedSuffix}.`,
+    };
+
+    return res.json({
+      success: true,
+      message: actionMessageMap[action],
+      data: {
+        updatedCount: updatedOrders.length,
+        updatedOrders,
+        skipped,
+      },
     });
   } catch (error: any) {
     res.status(500).json({ success: false, message: error.message });

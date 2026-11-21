@@ -9,11 +9,13 @@ import {
   completeDelivery,
   failDelivery,
   assignDriverToOrder,
+  bulkOrderAction,
 } from '../controllers/order.controller';
 
 const router = Router();
 
 router.get('/', getOrders);
+router.post('/bulk-action', bulkOrderAction);
 router.get('/:id', getOrderById);
 router.post('/', createOrder);
 router.put('/:id', updateOrder);

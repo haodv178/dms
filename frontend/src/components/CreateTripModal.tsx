@@ -17,6 +17,7 @@ interface CreateTripModalProps {
   packedOrders: Order[];
   availableDrivers: Driver[];
   submitting: boolean;
+  initialSelectedOrderIds?: number[];
   onCreateTrip: (orderIds: number[], driverId: number | null) => Promise<void>;
 }
 
@@ -26,6 +27,7 @@ export function CreateTripModal({
   packedOrders,
   availableDrivers,
   submitting,
+  initialSelectedOrderIds,
   onCreateTrip,
 }: CreateTripModalProps) {
   const [selectedOrderIds, setSelectedOrderIds] = useState<number[]>([]);
@@ -34,11 +36,19 @@ export function CreateTripModal({
 
   useEffect(() => {
     if (isOpen) {
-      setSelectedOrderIds(packedOrders.map((o) => o.id));
+      if (initialSelectedOrderIds && initialSelectedOrderIds.length > 0) {
+        const packedIdSet = new Set(packedOrders.map((o) => o.id));
+        const validInitial = initialSelectedOrderIds.filter((id) => packedIdSet.has(id));
+        setSelectedOrderIds(
+          validInitial.length > 0 ? validInitial : packedOrders.map((o) => o.id)
+        );
+      } else {
+        setSelectedOrderIds(packedOrders.map((o) => o.id));
+      }
       setSelectedDriverId('AUTO');
       setSearch('');
     }
-  }, [isOpen, packedOrders]);
+  }, [isOpen, packedOrders, initialSelectedOrderIds]);
 
   const filteredPackedOrders = useMemo(() => {
     const q = search.trim().toLowerCase();

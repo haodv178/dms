@@ -129,6 +129,31 @@ export function isOrderAssignable(status: OrderStatus): boolean {
   return ASSIGNABLE_ORDER_STATUSES.includes(status);
 }
 
+export type BulkOrderActionType =
+  | 'START_PICKING'
+  | 'COMPLETE_PACKING'
+  | 'ASSIGN_DRIVER'
+  | 'UNASSIGN_DRIVER'
+  | 'COMPLETE_DELIVERY'
+  | 'FAIL_DELIVERY';
+
+export interface BulkSkippedOrder {
+  id: number;
+  orderCode: string | null;
+  reason: string;
+}
+
+export interface BulkOrderActionResult {
+  updatedCount: number;
+  updatedOrders: Order[];
+  skipped: BulkSkippedOrder[];
+  message: string;
+}
+
+export function canRolePickAndPack(role: Role): boolean {
+  return role === 'ADMIN' || role === 'WAREHOUSE';
+}
+
 export function canRoleEditOrders(role: Role): boolean {
   return role === 'ADMIN' || role === 'WAREHOUSE';
 }

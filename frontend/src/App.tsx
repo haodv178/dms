@@ -5,6 +5,7 @@ import { Theme } from '@astryxdesign/core/theme';
 import { defaultThemeSlug, themes } from './astryx-themes';
 import {
   assignDriverToOrder,
+  bulkOrderAction,
   cancelOrDeleteTrip,
   completeDeliveryOrder,
   completePackingOrder,
@@ -29,6 +30,8 @@ import {
   updateProduct,
 } from './api/dmsApi';
 import { AssignDriverModal } from './components/AssignDriverModal';
+import { BulkAssignDriverModal } from './components/BulkAssignDriverModal';
+import { CreateTripModal } from './components/CreateTripModal';
 import { DriverFormModal } from './components/DriverFormModal';
 import { DriverManagementPage } from './components/DriverManagementPage';
 import { Header } from './components/Header';
@@ -46,6 +49,7 @@ import {
   orderToFormState,
   productToFormState,
   type ActivePage,
+  type BulkOrderActionType,
   type Driver,
   type DriverFormState,
   type DriverPagination,
@@ -122,6 +126,14 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
   const [trips, setTrips] = useState<Trip[]>([]);
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [orderSearch, setOrderSearch] = useState<string>('');
+  const [selectedOrderIds, setSelectedOrderIds] = useState<number[]>([]);
+  const [bulkActionLoading, setBulkActionLoading] = useState<boolean>(false);
+  const [bulkAssignTarget, setBulkAssignTarget] = useState<{
+    orders: Order[];
+    skippedCount: number;
+  } | null>(null);
+  const [showBulkCreateTripModal, setShowBulkCreateTripModal] = useState<boolean>(false);
+  const [bulkCreateTripOrderIds, setBulkCreateTripOrderIds] = useState<number[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [optimizing, setOptimizing] = useState<boolean>(false);
   const [savingOrder, setSavingOrder] = useState<boolean>(false);
@@ -419,6 +431,66 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
       notify(getErrorMessage(err), 'error');
     } finally {
       setSavingAssignment(false);
+    }
+  };
+
+  useEffect(() => {
+    const validIds = new Set(orders.map((o) => o.id));
+    setSelectedOrderIds((prev) => {
+      const next = prev.filter((id) => validIds.has(id));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [orders]);
+
+  const handleStatusFilterChange = (nextStatus: string) => {
+    setStatusFilter(nextStatus);
+    setSelectedOrderIds([]);
+  };
+
+  const handleBulkOrderAction = async (
+    action: BulkOrderActionType,
+    orderIds: number[],
+    driverId?: number
+  ) => {
+    if (orderIds.length === 0) return;
+    setBulkActionLoading(true);
+    try {
+      const result = await bulkOrderAction(action, orderIds, driverId);
+      notify(result.message, 'info');
+      setSelectedOrderIds([]);
+      setBulkAssignTarget(null);
+      await Promise.all([loadAllData(), loadDriversPage()]);
+    } catch (err) {
+      notify(getErrorMessage(err), 'error');
+    } finally {
+      setBulkActionLoading(false);
+    }
+  };
+
+  const handleOpenBulkAssignDriver = (eligibleOrders: Order[], skippedCount: number) => {
+    setBulkAssignTarget({ orders: eligibleOrders, skippedCount });
+    void loadAvailableDrivers();
+  };
+
+  const handleConfirmBulkAssignDriver = async (orderIds: number[], driverId: number) => {
+    await handleBulkOrderAction('ASSIGN_DRIVER', orderIds, driverId);
+  };
+
+  const handleOpenBulkCreateTrip = (packedOrderIds: number[]) => {
+    setBulkCreateTripOrderIds(packedOrderIds);
+    setShowBulkCreateTripModal(true);
+    void loadAvailableDrivers();
+  };
+
+  const handleConfirmBulkCreateTrip = async (
+    orderIds: number[],
+    driverId: number | null
+  ) => {
+    const created = await handleCreateTrip(orderIds, driverId);
+    if (created) {
+      setShowBulkCreateTripModal(false);
+      setBulkCreateTripOrderIds([]);
+      setSelectedOrderIds([]);
     }
   };
 
@@ -859,11 +931,17 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
             filteredOrders={filteredOrders}
             counts={counts}
             statusFilter={statusFilter}
-            onStatusFilterChange={setStatusFilter}
+            onStatusFilterChange={handleStatusFilterChange}
             searchQuery={orderSearch}
             onSearchQueryChange={setOrderSearch}
+            selectedOrderIds={selectedOrderIds}
+            onSelectedOrderIdsChange={setSelectedOrderIds}
             loading={loading}
+            bulkLoading={bulkActionLoading}
             onBatchPreparePacked={handleBatchPreparePacked}
+            onBulkAction={handleBulkOrderAction}
+            onOpenBulkAssignDriver={handleOpenBulkAssignDriver}
+            onOpenBulkCreateTrip={handleOpenBulkCreateTrip}
             onEditOrder={handleOpenEditOrder}
             onOpenAssignDriver={handleOpenAssignDriver}
             onStartPicking={handleStartPicking}
@@ -999,6 +1077,35 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
         submitting={savingAssignment}
         onAssign={handleAssignDriver}
         onUnassign={handleUnassignDriver}
+      />
+
+      <BulkAssignDriverModal
+        isOpen={Boolean(bulkAssignTarget)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setBulkAssignTarget(null);
+          }
+        }}
+        orders={bulkAssignTarget?.orders ?? []}
+        skippedCount={bulkAssignTarget?.skippedCount ?? 0}
+        drivers={assignableDrivers}
+        submitting={bulkActionLoading}
+        onConfirm={handleConfirmBulkAssignDriver}
+      />
+
+      <CreateTripModal
+        isOpen={showBulkCreateTripModal}
+        onOpenChange={(open) => {
+          setShowBulkCreateTripModal(open);
+          if (!open) {
+            setBulkCreateTripOrderIds([]);
+          }
+        }}
+        packedOrders={packedOrders}
+        availableDrivers={availableDrivers}
+        submitting={optimizing}
+        initialSelectedOrderIds={bulkCreateTripOrderIds}
+        onCreateTrip={handleConfirmBulkCreateTrip}
       />
     </div>
   );

@@ -1,6 +1,8 @@
 import axios from 'axios';
 import {
   computeOrderFormTotal,
+  type BulkOrderActionResult,
+  type BulkOrderActionType,
   type Driver,
   type DriverFormState,
   type DriverPagination,
@@ -70,6 +72,24 @@ export async function assignDriverToOrder(
   return {
     order: res.data.data as Order,
     message: (res.data?.message as string) || 'Cập nhật tài xế cho đơn hàng thành công!',
+  };
+}
+
+export async function bulkOrderAction(
+  action: BulkOrderActionType,
+  orderIds: number[],
+  driverId?: number
+): Promise<BulkOrderActionResult> {
+  const res = await axios.post(`${API_BASE}/orders/bulk-action`, {
+    action,
+    orderIds,
+    ...(driverId !== undefined ? { driverId } : {}),
+  });
+  return {
+    updatedCount: Number(res.data?.data?.updatedCount ?? 0),
+    updatedOrders: (res.data?.data?.updatedOrders as Order[]) || [],
+    skipped: (res.data?.data?.skipped as BulkOrderActionResult['skipped']) || [],
+    message: (res.data?.message as string) || 'Thực hiện thao tác hàng loạt thành công!',
   };
 }
 

@@ -98,7 +98,7 @@ doan/
 │       ├── controllers/
 │       │   ├── auth.controller.ts    # Login, Me, System Overview, Seed API
 │       │   ├── driver.controller.ts  # CRUD tài xế (User + DriverProfile), lọc trạng thái/loại xe & phân trang server
-│       │   ├── order.controller.ts   # Tạo/sửa đơn hàng, sắp xếp mặc định createdAt DESC, chuyển trạng thái & gán tài xế trực tiếp
+│       │   ├── order.controller.ts   # Tạo/sửa đơn hàng, sắp xếp mặc định createdAt DESC, chuyển trạng thái, gán tài xế & thao tác hàng loạt (bulk-action)
 │       │   ├── product.controller.ts # CRUD sản phẩm, thống kê KPI & phân trang phía server
 │       │   └── trip.controller.ts    # Tối ưu/tạo chuyến OR-Tools, xuất phát (IN_TRANSIT), đổi tài xế, tối ưu lại & hủy chuyến
 │       └── routes/
@@ -129,9 +129,10 @@ doan/
         │   └── dmsApi.ts        # Axios client gọi REST API Backend (Orders, Trips, Products, Drivers)
         └── components/
             ├── Header.tsx                  # Top Bar: Chuyển trang Đơn hàng/Chuyến xe/Sản phẩm/Tài xế, Role, Theme, Seed/New
-            ├── OrderTable.tsx              # Trang chủ full-width: Bảng đơn hàng sắp xếp createdAt DESC, cột Ngày tạo, tìm kiếm & lọc trạng thái
+            ├── OrderTable.tsx              # Trang chủ full-width: Bảng đơn hàng sắp xếp createdAt DESC, chọn nhiều dòng + thanh thao tác hàng loạt theo vai trò, tìm kiếm & lọc trạng thái
             ├── OrderFormModal.tsx          # Hộp thoại Tạo/Sửa đơn hàng: Mini-map Leaflet + chọn sản phẩm danh mục
             ├── AssignDriverModal.tsx       # Hộp thoại Astryx Dialog gán/đổi/bỏ gán tài xế trực tiếp cho từng đơn hàng
+            ├── BulkAssignDriverModal.tsx   # Hộp thoại Astryx Dialog gán tài xế hàng loạt cho nhiều đơn đủ điều kiện
             ├── TripManagementPage.tsx      # Trang Quản lý Chuyến xe: KPI, master-detail danh sách chuyến, RouteMap & thao tác vòng đời chuyến
             ├── CreateTripModal.tsx         # Hộp thoại chọn đơn PACKED & tài xế để tối ưu/tạo chuyến mới bằng Google OR-Tools
             ├── ReassignTripDriverModal.tsx # Hộp thoại đổi tài xế phụ trách cho chuyến xe đang hoạt động
@@ -333,6 +334,9 @@ model Product {
   - **Gán / Đổi tài xế (`{ "driverId": 3 }`):** Hỗ trợ đơn ở trạng thái `PACKED`, `DELIVERING`, hoặc `FAILED` (giao lại). Chỉ chấp nhận tài xế đang hoạt động (`isActive: true`) và không ở trạng thái `OFFLINE`. Tự động ghép đơn vào chuyến đang hoạt động (`ASSIGNED`/`IN_TRANSIT`) của tài xế ở cuối lộ trình (`max(deliverySequence) + 1`) hoặc tạo `Trip` mới, chuyển đơn sang `DELIVERING` và cập nhật tài xế sang `ON_DELIVERY`.
   - **Bỏ gán tài xế (`{ "driverId": null }`):** Hỗ trợ đơn đang `DELIVERING`; gỡ `tripId`/`deliverySequence` và đưa đơn về `PACKED`.
   - **Đồng bộ chuyến cũ:** Khi đổi hoặc bỏ gán tài xế, hệ thống tự đánh lại số thứ tự `1..N` cho các điểm dừng còn lại của chuyến cũ, xóa `totalDistance` cũ, tự xóa chuyến rỗng (hoặc đóng `COMPLETED` nếu không còn đơn `DELIVERING`) và chuyển tài xế cũ về `AVAILABLE` nếu không còn chuyến hoạt động khác.
+- `POST /api/orders/bulk-action`: Thực hiện **thao tác hàng loạt** trên danh sách đơn hàng (`{ "action": "...", "orderIds": [1, 2, 3], "driverId"?: 3 }`) trong một Prisma transaction:
+  - **Các thao tác hỗ trợ:** `START_PICKING` (`NEW` ➔ `PICKING`), `COMPLETE_PACKING` (`PICKING` ➔ `PACKED`), `ASSIGN_DRIVER` (`PACKED`/`DELIVERING`/`FAILED` ➔ `DELIVERING`, ghép vào chuyến đang hoạt động của tài xế hoặc tạo 1 chuyến mới), `UNASSIGN_DRIVER` (`DELIVERING` ➔ `PACKED`), `COMPLETE_DELIVERY` (`DELIVERING` ➔ `COMPLETED`), và `FAIL_DELIVERY` (`DELIVERING` ➔ `FAILED`).
+  - **Kiểm tra điều kiện & đồng bộ:** Kiểm tra trạng thái hợp lệ cho từng đơn phía server, tự động cập nhật tất cả đơn đủ điều kiện, đồng bộ trạng thái/thứ tự điểm dừng của các `Trip` và trạng thái `DriverProfile` liên quan một lần, đồng thời trả về `{ updatedCount, updatedOrders, skipped: [{ id, orderCode, reason }], message }`.
 
 #### Quản lý Sản phẩm (Product Catalog & Server-Side Pagination)
 - `GET /api/products`: Danh sách sản phẩm hỗ trợ phân trang phía server (`?page=1&limit=20`, giới hạn `1–100`), tìm kiếm theo tên/SKU/danh mục (`?search=`), lọc danh mục (`?category=`), và lọc sản phẩm đang bán (`?activeOnly=true`). Trả về `data`, `pagination` (`page`, `limit`, `total`, `totalPages`) và `summary` (`totalProducts`, `activeProducts`, `lowStockProducts`, `totalStock`).
@@ -418,10 +422,15 @@ Giao diện đơn trang (SPA) tại `http://localhost:5173` được xây dựng
    - **Theme Mode Switcher (`SegmentedControl`):** Chuyển đổi chế độ giao diện **Sáng / Hệ thống / Tối** (lưu trong `localStorage`), tự động đồng bộ toàn bộ token màu Astryx và lớp bản đồ Leaflet.
    - **Tạo đơn mới (`Button` + `Dialog`):** Mở hộp thoại thống nhất cho cả Tạo và Sửa đơn hàng (`OrderFormModal.tsx`).
    - **Seed 10 Sample Orders (`Button`):** Khôi phục/nạp nhanh 10 đơn hàng mẫu ở trạng thái `NEW` để bắt đầu buổi thuyết trình.
-2. **Trang Chủ — Quản Lý Đơn Hàng (`#orders`, `OrderTable.tsx`, `OrderFormModal.tsx` & `AssignDriverModal.tsx`):**
+2. **Trang Chủ — Quản Lý Đơn Hàng (`#orders`, `OrderTable.tsx`, `OrderFormModal.tsx`, `AssignDriverModal.tsx` & `BulkAssignDriverModal.tsx`):**
    - Hiển thị **bảng đơn hàng toàn chiều rộng (full-width)**, sắp xếp mặc định theo **ngày tạo mới nhất (`createdAt DESC`)** với cột **Ngày Tạo** hiển thị rõ thời gian tạo đơn.
    - Ô tìm kiếm nhanh theo mã đơn, tên khách hàng, SĐT, địa chỉ, mã chuyến hoặc tên tài xế, kết hợp các tab lọc trạng thái (`ALL`, `NEW`, `PICKING`, `PACKED`, `DELIVERING`, `COMPLETED`, `FAILED`).
    - Nút tiện ích **"Đóng gói nhanh"** giúp chuyển nhanh các đơn `NEW`/`PICKING` sang `PACKED`.
+   - **Thao tác hàng loạt (Mass Actions):**
+     - Cột checkbox chọn từng đơn và checkbox chọn tất cả (hỗ trợ trạng thái `indeterminate`) theo danh sách đang hiển thị; tự động bỏ chọn khi chuyển tab trạng thái hoặc sau khi thao tác thành công.
+     - **Thanh công cụ ngữ cảnh** xuất hiện ngay trên bảng khi chọn ≥ 1 đơn, tự tính số lượng đơn đủ điều kiện cho từng nút thao tác (hỗ trợ chọn lẫn nhiều trạng thái) và phân quyền theo vai trò:
+       - `WAREHOUSE` & `ADMIN`: **Bắt đầu nhặt**, **Đóng gói xong** (thực thi ngay), **Gán tài xế** (mở `BulkAssignDriverModal.tsx`), **Tạo chuyến tối ưu** (mở `CreateTripModal.tsx` đã chọn sẵn các đơn `PACKED`), và **Bỏ gán tài xế** (có `AlertDialog` xác nhận).
+       - `DRIVER` & `ADMIN`: **Giao thành công** và **Giao thất bại** (có `AlertDialog` xác nhận hiển thị số lượng và mã đơn ảnh hưởng).
    - Bảng đơn hàng (`Table`, `Badge`, `Button`, `IconButton`) hiển thị mã đơn, mã chuyến/thứ tự dừng, ngày tạo, thông tin khách hàng, tổng tiền, trạng thái, tài xế phụ trách và các thao tác vòng đời đơn (chỉnh sửa, nhặt hàng, đóng gói, gán/đổi tài xế, giao thành công/thất bại).
    - **Hộp thoại Gán Tài Xế (`AssignDriverModal.tsx`):** Hiển thị tóm tắt đơn hàng, ô tìm kiếm tài xế theo tên/SĐT/biển số/loại xe, danh sách tài xế đủ điều kiện (ưu tiên `AVAILABLE` trước `ON_DELIVERY` kèm số đơn đang giao) và nút **"Bỏ gán tài xế"** khi đơn đang ở trạng thái `DELIVERING`.
    - **Hộp thoại Tạo/Sửa Đơn Hàng (`OrderFormModal.tsx`):**
@@ -527,6 +536,15 @@ curl -X PATCH http://localhost:3000/api/trips/1/driver \
 curl -X POST http://localhost:3000/api/trips/1/reoptimize
 
 curl -X DELETE http://localhost:3000/api/trips/1
+
+# 10. Thao tác hàng loạt trên đơn hàng (START_PICKING, COMPLETE_PACKING, ASSIGN_DRIVER, UNASSIGN_DRIVER, COMPLETE_DELIVERY, FAIL_DELIVERY)
+curl -X POST http://localhost:3000/api/orders/bulk-action \
+  -H "Content-Type: application/json" \
+  -d '{"action": "START_PICKING", "orderIds": [1, 2, 3]}'
+
+curl -X POST http://localhost:3000/api/orders/bulk-action \
+  -H "Content-Type: application/json" \
+  -d '{"action": "ASSIGN_DRIVER", "orderIds": [1, 2], "driverId": 3}'
 ```
 
 #### Nạp nhanh 1.000 sản phẩm mẫu để kiểm thử phân trang:
