@@ -1,5 +1,6 @@
 export type Role = 'ADMIN' | 'WAREHOUSE' | 'DRIVER';
-export type ActivePage = 'orders' | 'products';
+export type ActivePage = 'orders' | 'products' | 'drivers';
+export type DriverStatus = 'AVAILABLE' | 'ON_DELIVERY' | 'OFFLINE';
 export type OrderStatus =
   | 'NEW'
   | 'PICKING'
@@ -111,6 +112,10 @@ export function isOrderEditable(status: OrderStatus): boolean {
 
 export function canRoleEditOrders(role: Role): boolean {
   return role === 'ADMIN' || role === 'WAREHOUSE';
+}
+
+export function canRoleManageDrivers(role: Role): boolean {
+  return role === 'ADMIN';
 }
 
 export const INITIAL_ORDER_FORM: OrderFormState = {
@@ -311,6 +316,111 @@ export function productToFormState(product: Product): ProductFormState {
     price: String(Number(product.price)),
     stock: String(product.stock),
     isActive: product.isActive,
+  };
+}
+
+export interface DriverActiveTrip {
+  id: number;
+  tripCode: string;
+  status: string;
+  ordersCount: number;
+}
+
+export interface Driver {
+  id: number;
+  email: string;
+  name: string;
+  role: Role;
+  phone: string;
+  vehicleType: string;
+  licensePlate: string;
+  status: DriverStatus;
+  isActive: boolean;
+  notes: string;
+  activeTrip: DriverActiveTrip | null;
+  totalTrips: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DriverPagination {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+}
+
+export interface DriverSummary {
+  totalDrivers: number;
+  availableDrivers: number;
+  onDeliveryDrivers: number;
+  inactiveDrivers: number;
+}
+
+export interface PaginatedDriversResponse {
+  items: Driver[];
+  pagination: DriverPagination;
+  summary: DriverSummary;
+}
+
+export interface DriverFormState {
+  name: string;
+  email: string;
+  password: string;
+  phone: string;
+  vehicleType: string;
+  licensePlate: string;
+  status: DriverStatus;
+  isActive: boolean;
+  notes: string;
+}
+
+export const DRIVER_VEHICLE_TYPES = ['Xe máy', 'Xe tải nhỏ', 'Xe van'] as const;
+
+export const DRIVER_STATUS_CONFIG: Record<
+  DriverStatus,
+  { label: string; shortLabel: string; badgeVariant: StatusBadgeVariant }
+> = {
+  AVAILABLE: {
+    label: 'Sẵn sàng (AVAILABLE)',
+    shortLabel: 'Sẵn sàng',
+    badgeVariant: 'green',
+  },
+  ON_DELIVERY: {
+    label: 'Đang giao hàng (ON_DELIVERY)',
+    shortLabel: 'Đang giao',
+    badgeVariant: 'blue',
+  },
+  OFFLINE: {
+    label: 'Ngoại tuyến (OFFLINE)',
+    shortLabel: 'Ngoại tuyến',
+    badgeVariant: 'neutral',
+  },
+};
+
+export const INITIAL_DRIVER_FORM: DriverFormState = {
+  name: '',
+  email: '',
+  password: '',
+  phone: '',
+  vehicleType: 'Xe máy',
+  licensePlate: '',
+  status: 'AVAILABLE',
+  isActive: true,
+  notes: '',
+};
+
+export function driverToFormState(driver: Driver): DriverFormState {
+  return {
+    name: driver.name,
+    email: driver.email,
+    password: '',
+    phone: driver.phone,
+    vehicleType: driver.vehicleType || 'Xe máy',
+    licensePlate: driver.licensePlate,
+    status: driver.status,
+    isActive: driver.isActive,
+    notes: driver.notes || '',
   };
 }
 

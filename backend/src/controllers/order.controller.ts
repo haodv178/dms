@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { OrderStatus } from '@prisma/client';
+import { DriverStatus, OrderStatus } from '@prisma/client';
 import prisma from '../lib/prisma';
 
 const EDITABLE_ORDER_STATUSES: OrderStatus[] = [
@@ -362,10 +362,29 @@ async function checkAndCompleteTrip(tripId: number | null) {
     },
   });
   if (remainingDelivering === 0) {
-    await prisma.trip.update({
+    const completedTrip = await prisma.trip.update({
       where: { id: tripId },
       data: { status: 'COMPLETED' },
+      select: { driverId: true },
     });
+
+    if (completedTrip.driverId) {
+      const otherActiveTrips = await prisma.trip.count({
+        where: {
+          driverId: completedTrip.driverId,
+          status: { in: ['ASSIGNED', 'IN_TRANSIT'] },
+        },
+      });
+      if (otherActiveTrips === 0) {
+        await prisma.driverProfile.updateMany({
+          where: {
+            userId: completedTrip.driverId,
+            isActive: true,
+          },
+          data: { status: DriverStatus.AVAILABLE },
+        });
+      }
+    }
   } else {
     await prisma.trip.update({
       where: { id: tripId },

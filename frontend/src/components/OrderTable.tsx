@@ -7,6 +7,7 @@ import {
   Pencil,
   ShoppingBag,
   Sparkles,
+  Truck,
   XCircle,
 } from 'lucide-react';
 import { Badge } from '@astryxdesign/core/Badge';
@@ -15,6 +16,7 @@ import { Card } from '@astryxdesign/core/Card';
 import { CheckboxInput } from '@astryxdesign/core/CheckboxInput';
 import { Heading } from '@astryxdesign/core/Heading';
 import { IconButton } from '@astryxdesign/core/IconButton';
+import { Selector } from '@astryxdesign/core/Selector';
 import { Tab, TabList } from '@astryxdesign/core/TabList';
 import {
   Table,
@@ -31,6 +33,7 @@ import {
   canRoleEditOrders,
   formatVND,
   isOrderEditable,
+  type Driver,
   type Order,
   type Role,
 } from '../types/dms';
@@ -45,6 +48,9 @@ interface OrderTableProps {
   selectedOrderIds: number[];
   onToggleSelectOrder: (id: number) => void;
   onToggleSelectAllPacked: () => void;
+  availableDrivers: Driver[];
+  selectedDriverId: string;
+  onSelectedDriverIdChange: (driverId: string) => void;
   loading: boolean;
   optimizing: boolean;
   onBatchPreparePacked: () => void;
@@ -66,6 +72,9 @@ export function OrderTable({
   selectedOrderIds,
   onToggleSelectOrder,
   onToggleSelectAllPacked,
+  availableDrivers,
+  selectedDriverId,
+  onSelectedDriverIdChange,
   loading,
   optimizing,
   onBatchPreparePacked,
@@ -81,6 +90,20 @@ export function OrderTable({
     packedOrdersCount > 0 && selectedOrderIds.length === packedOrdersCount;
   const somePackedSelected =
     selectedOrderIds.length > 0 && selectedOrderIds.length < packedOrdersCount;
+
+  const driverOptions = [
+    {
+      value: 'AUTO',
+      label:
+        availableDrivers.length > 0
+          ? `Tự động chọn tài xế (${availableDrivers.length} sẵn sàng)`
+          : 'Tự động chọn tài xế',
+    },
+    ...availableDrivers.map((d) => ({
+      value: String(d.id),
+      label: `${d.name} • ${d.vehicleType} (${d.licensePlate})`,
+    })),
+  ];
 
   return (
     <section className="lg:col-span-7 flex flex-col gap-4">
@@ -123,6 +146,18 @@ export function OrderTable({
                 onClick={onBatchPreparePacked}
               />
             )}
+
+            <Selector
+              label="Chọn tài xế giao hàng"
+              isLabelHidden
+              variant="secondary"
+              size="sm"
+              width={250}
+              startIcon={<Truck className="w-3.5 h-3.5" />}
+              options={driverOptions}
+              value={selectedDriverId}
+              onChange={(val) => onSelectedDriverIdChange(val as string)}
+            />
 
             <Button
               label={

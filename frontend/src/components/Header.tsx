@@ -9,6 +9,7 @@ import {
   Sun,
   Truck,
   UserCheck,
+  Users,
 } from 'lucide-react';
 import { Badge } from '@astryxdesign/core/Badge';
 import { Button } from '@astryxdesign/core/Button';
@@ -32,6 +33,7 @@ interface HeaderProps {
   onThemeModeChange: (mode: ThemeMode) => void;
   counts: Record<string, number>;
   productsCount: number;
+  driversCount: number;
   loading: boolean;
   onOpenNewOrder: () => void;
   onSeedOrders: () => void;
@@ -52,6 +54,7 @@ export function Header({
   onThemeModeChange,
   counts,
   productsCount,
+  driversCount,
   loading,
   onOpenNewOrder,
   onSeedOrders,
@@ -94,6 +97,11 @@ export function Header({
               value="products"
               label={`Sản phẩm (${productsCount})`}
               icon={<Package className="w-3.5 h-3.5" />}
+            />
+            <SegmentedControlItem
+              value="drivers"
+              label={`Tài xế (${driversCount})`}
+              icon={<Users className="w-3.5 h-3.5" />}
             />
           </SegmentedControl>
 

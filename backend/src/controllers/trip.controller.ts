@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { OrderStatus, Role } from '@prisma/client';
+import { DriverStatus, OrderStatus, Role } from '@prisma/client';
 import axios from 'axios';
 import prisma from '../lib/prisma';
 
@@ -37,11 +37,42 @@ export const optimizeAndCreateTrip = async (req: Request, res: Response) => {
       });
     }
 
-    // Tìm tài xế mặc định nếu không truyền driverId
-    let assignedDriverId = driverId ? Number(driverId) : null;
-    if (!assignedDriverId) {
-      const defaultDriver = await prisma.user.findFirst({ where: { role: Role.DRIVER } });
-      if (defaultDriver) assignedDriverId = defaultDriver.id;
+    // Tìm và kiểm tra tài xế được chọn hoặc tự động chọn tài xế AVAILABLE
+    let assignedDriverId: number | null = driverId ? Number(driverId) : null;
+    if (assignedDriverId !== null) {
+      const selectedDriver = await prisma.user.findFirst({
+        where: { id: assignedDriverId, role: Role.DRIVER },
+        include: { driverProfile: true },
+      });
+      if (!selectedDriver) {
+        return res.status(404).json({
+          success: false,
+          message: 'Không tìm thấy tài xế được chọn!',
+        });
+      }
+      if (selectedDriver.driverProfile && !selectedDriver.driverProfile.isActive) {
+        return res.status(400).json({
+          success: false,
+          message: `Tài xế "${selectedDriver.name}" hiện đang ngừng hoạt động.`,
+        });
+      }
+    } else {
+      const availableDriver = await prisma.user.findFirst({
+        where: {
+          role: Role.DRIVER,
+          driverProfile: { is: { isActive: true, status: DriverStatus.AVAILABLE } },
+        },
+        orderBy: { id: 'asc' },
+      });
+      if (availableDriver) {
+        assignedDriverId = availableDriver.id;
+      } else {
+        const fallbackDriver = await prisma.user.findFirst({
+          where: { role: Role.DRIVER },
+          orderBy: { id: 'asc' },
+        });
+        if (fallbackDriver) assignedDriverId = fallbackDriver.id;
+      }
     }
 
     // 3. Gửi payload sang Python OR-Tools solver
@@ -75,6 +106,13 @@ export const optimizeAndCreateTrip = async (req: Request, res: Response) => {
         totalDistance: route.total_distance_meters,
       },
     });
+
+    if (assignedDriverId) {
+      await prisma.driverProfile.updateMany({
+        where: { userId: assignedDriverId },
+        data: { status: DriverStatus.ON_DELIVERY },
+      });
+    }
 
     // Cập nhật từng order: gán tripId, deliverySequence, và đổi trạng thái sang DELIVERING
     for (const stop of route.stops) {

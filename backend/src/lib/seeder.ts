@@ -1,4 +1,93 @@
-import { PrismaClient, Role, OrderStatus } from '@prisma/client';
+import { PrismaClient, Role, OrderStatus, DriverStatus } from '@prisma/client';
+
+const SAMPLE_DRIVERS = [
+  {
+    email: 'taixe@dms.vn',
+    name: 'Tài xế Nguyễn Văn A',
+    phone: '0901234567',
+    vehicleType: 'Xe máy',
+    licensePlate: '59X3-123.45',
+    status: DriverStatus.AVAILABLE,
+    isActive: true,
+    notes: 'Tài xế khu vực Quận 7 & Quận 4',
+  },
+  {
+    email: 'taixe.binh@dms.vn',
+    name: 'Trần Quốc Bình',
+    phone: '0902345678',
+    vehicleType: 'Xe máy',
+    licensePlate: '59C2-678.90',
+    status: DriverStatus.AVAILABLE,
+    isActive: true,
+    notes: 'Giao nhanh đơn hàng tươi sống',
+  },
+  {
+    email: 'taixe.cuong@dms.vn',
+    name: 'Lê Minh Cường',
+    phone: '0903456789',
+    vehicleType: 'Xe van',
+    licensePlate: '51D-456.78',
+    status: DriverStatus.AVAILABLE,
+    isActive: true,
+    notes: 'Chuyên đơn hàng cồng kềnh, thùng nước',
+  },
+  {
+    email: 'taixe.dung@dms.vn',
+    name: 'Phạm Tiến Dũng',
+    phone: '0904567890',
+    vehicleType: 'Xe tải nhỏ',
+    licensePlate: '51C-889.12',
+    status: DriverStatus.AVAILABLE,
+    isActive: true,
+    notes: 'Tuyến Phú Mỹ Hưng & Nhà Bè',
+  },
+  {
+    email: 'taixe.hung@dms.vn',
+    name: 'Võ Thanh Hùng',
+    phone: '0905678901',
+    vehicleType: 'Xe máy',
+    licensePlate: '59T1-334.56',
+    status: DriverStatus.OFFLINE,
+    isActive: true,
+    notes: 'Ca chiều (13:00 - 21:00)',
+  },
+];
+
+export async function seedDrivers(prisma: PrismaClient) {
+  const drivers = [];
+  for (const drv of SAMPLE_DRIVERS) {
+    const user = await prisma.user.upsert({
+      where: { email: drv.email },
+      update: {
+        name: drv.name,
+        role: Role.DRIVER,
+      },
+      create: {
+        email: drv.email,
+        password: '123',
+        name: drv.name,
+        role: Role.DRIVER,
+      },
+    });
+
+    await prisma.driverProfile.upsert({
+      where: { userId: user.id },
+      update: {},
+      create: {
+        userId: user.id,
+        phone: drv.phone,
+        vehicleType: drv.vehicleType,
+        licensePlate: drv.licensePlate,
+        status: drv.status,
+        isActive: drv.isActive,
+        notes: drv.notes,
+      },
+    });
+
+    drivers.push(user);
+  }
+  return drivers;
+}
 
 const SAMPLE_PRODUCTS = [
   { sku: 'LM-DAIRY-001', name: 'Sữa tươi Tiệt trùng Vinamilk 1L', category: 'Sữa & Đồ uống', unit: 'Hộp', price: 35000, stock: 120 },
@@ -72,6 +161,10 @@ export async function runSeed(prisma: PrismaClient, resetOrders = true) {
     await prisma.orderItem.deleteMany({});
     await prisma.order.deleteMany({});
     await prisma.trip.deleteMany({});
+    await prisma.driverProfile.updateMany({
+      where: { isActive: true, status: DriverStatus.ON_DELIVERY },
+      data: { status: DriverStatus.AVAILABLE },
+    });
   }
 
   // 3. Tạo 10 Đơn hàng mẫu nằm rải rác xung quanh Kho (Quận 7, Quận 4, Nhà Bè)
@@ -237,12 +330,14 @@ export async function runSeed(prisma: PrismaClient, resetOrders = true) {
   }
 
   const seededProducts = await seedProducts(prisma);
+  const seededDrivers = await seedDrivers(prisma);
 
   return {
     store,
     users: [admin, warehouse, driver],
     ordersCount: createdOrders.length,
     productsCount: seededProducts.length,
+    driversCount: seededDrivers.length,
     orders: createdOrders,
   };
 }

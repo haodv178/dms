@@ -6,20 +6,26 @@ import { defaultThemeSlug, themes } from './astryx-themes';
 import {
   completeDeliveryOrder,
   completePackingOrder,
+  createDriver,
   createOrder,
   createProduct,
+  deleteDriver,
   deleteProduct,
   failDeliveryOrder,
   fetchDashboardData,
+  fetchDrivers,
   fetchProducts,
   getErrorMessage,
   optimizeTripRoute,
   seedSampleOrders,
   startPickingOrder,
+  updateDriver,
   updateOrder,
   updateProduct,
 } from './api/dmsApi';
 import { ActiveTripPanel } from './components/ActiveTripPanel';
+import { DriverFormModal } from './components/DriverFormModal';
+import { DriverManagementPage } from './components/DriverManagementPage';
 import { Header } from './components/Header';
 import { OrderFormModal } from './components/OrderFormModal';
 import { OrderTable } from './components/OrderTable';
@@ -28,11 +34,17 @@ import { ProductManagementPage } from './components/ProductManagementPage';
 import { RouteMap } from './components/RouteMap';
 import {
   DEFAULT_DEPOT,
+  INITIAL_DRIVER_FORM,
   INITIAL_ORDER_FORM,
   INITIAL_PRODUCT_FORM,
+  driverToFormState,
   orderToFormState,
   productToFormState,
   type ActivePage,
+  type Driver,
+  type DriverFormState,
+  type DriverPagination,
+  type DriverSummary,
   type Order,
   type OrderFormState,
   type Product,
@@ -66,8 +78,9 @@ interface DmsDashboardProps {
 }
 
 function readInitialPage(): ActivePage {
-  if (typeof window !== 'undefined' && window.location.hash === '#products') {
-    return 'products';
+  if (typeof window !== 'undefined') {
+    if (window.location.hash === '#products') return 'products';
+    if (window.location.hash === '#drivers') return 'drivers';
   }
   return 'orders';
 }
@@ -117,10 +130,39 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [productForm, setProductForm] = useState<ProductFormState>(INITIAL_PRODUCT_FORM);
 
+  const [drivers, setDrivers] = useState<Driver[]>([]);
+  const [availableDrivers, setAvailableDrivers] = useState<Driver[]>([]);
+  const [selectedDriverId, setSelectedDriverId] = useState<string>('AUTO');
+  const [driverPagination, setDriverPagination] = useState<DriverPagination>({
+    page: 1,
+    limit: 20,
+    total: 0,
+    totalPages: 1,
+  });
+  const [driverSummary, setDriverSummary] = useState<DriverSummary>({
+    totalDrivers: 0,
+    availableDrivers: 0,
+    onDeliveryDrivers: 0,
+    inactiveDrivers: 0,
+  });
+  const [driverPage, setDriverPage] = useState<number>(1);
+  const [driverPageSize, setDriverPageSize] = useState<number>(20);
+  const [driverSearch, setDriverSearch] = useState<string>('');
+  const [debouncedDriverSearch, setDebouncedDriverSearch] = useState<string>('');
+  const [driverStatusFilter, setDriverStatusFilter] = useState<string>('ALL');
+  const [driverVehicleFilter, setDriverVehicleFilter] = useState<string>('ALL');
+  const [loadingDrivers, setLoadingDrivers] = useState<boolean>(false);
+
+  const [savingDriver, setSavingDriver] = useState<boolean>(false);
+  const [showDriverModal, setShowDriverModal] = useState<boolean>(false);
+  const [driverModalMode, setDriverModalMode] = useState<'create' | 'edit'>('create');
+  const [editingDriver, setEditingDriver] = useState<Driver | null>(null);
+  const [driverForm, setDriverForm] = useState<DriverFormState>(INITIAL_DRIVER_FORM);
+
   const handleActivePageChange = (page: ActivePage) => {
     setActivePage(page);
     try {
-      window.location.hash = page === 'products' ? '#products' : '#orders';
+      window.location.hash = `#${page}`;
     } catch {
       // Ignore hash errors
     }
@@ -132,6 +174,13 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
     }, 250);
     return () => window.clearTimeout(timer);
   }, [productSearch]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedDriverSearch(driverSearch);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [driverSearch]);
 
   const notify = useCallback(
     (text: string, type: 'info' | 'error' = 'info') => {
@@ -180,12 +229,53 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
     }
   }, []);
 
+  const loadDriversPage = useCallback(
+    async (
+      page = driverPage,
+      limit = driverPageSize,
+      search = debouncedDriverSearch,
+      status = driverStatusFilter,
+      vehicleType = driverVehicleFilter
+    ) => {
+      setLoadingDrivers(true);
+      try {
+        const res = await fetchDrivers({ page, limit, search, status, vehicleType });
+        setDrivers(res.items);
+        setDriverPagination(res.pagination);
+        setDriverSummary(res.summary);
+        if (res.pagination.page !== page) {
+          setDriverPage(res.pagination.page);
+        }
+      } catch (err) {
+        notify(`Không thể tải danh sách tài xế: ${getErrorMessage(err)}`, 'error');
+      } finally {
+        setLoadingDrivers(false);
+      }
+    },
+    [driverPage, driverPageSize, debouncedDriverSearch, driverStatusFilter, driverVehicleFilter, notify]
+  );
+
+  const loadAvailableDrivers = useCallback(async () => {
+    try {
+      const res = await fetchDrivers({ availableOnly: true, page: 1, limit: 50 });
+      setAvailableDrivers(res.items);
+      setDriverSummary(res.summary);
+      setSelectedDriverId((prev) => {
+        if (prev === 'AUTO') return prev;
+        return res.items.some((d) => String(d.id) === prev) ? prev : 'AUTO';
+      });
+    } catch {
+      // Ignore secondary driver fetch error
+    }
+  }, []);
+
   const loadAllData = useCallback(async () => {
     setLoading(true);
     try {
       const [data] = await Promise.all([
         fetchDashboardData(),
         loadCatalogProducts(),
+        loadAvailableDrivers(),
       ]);
       setOrders(data.orders);
       if (data.depot) {
@@ -202,7 +292,7 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
     } finally {
       setLoading(false);
     }
-  }, [notify, loadCatalogProducts]);
+  }, [notify, loadCatalogProducts, loadAvailableDrivers]);
 
   useEffect(() => {
     void loadAllData();
@@ -217,6 +307,23 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
     );
   }, [loadProductsPage, productPage, productPageSize, debouncedProductSearch, productCategory]);
 
+  useEffect(() => {
+    void loadDriversPage(
+      driverPage,
+      driverPageSize,
+      debouncedDriverSearch,
+      driverStatusFilter,
+      driverVehicleFilter
+    );
+  }, [
+    loadDriversPage,
+    driverPage,
+    driverPageSize,
+    debouncedDriverSearch,
+    driverStatusFilter,
+    driverVehicleFilter,
+  ]);
+
   const handleSeedOrders = async () => {
     setLoading(true);
     try {
@@ -224,7 +331,7 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
       notify(message, 'info');
       setSelectedOrderIds([]);
       setActiveTrip(null);
-      await loadAllData();
+      await Promise.all([loadAllData(), loadDriversPage()]);
     } catch (err) {
       notify(`Lỗi nạp dữ liệu mẫu: ${getErrorMessage(err)}`, 'error');
     } finally {
@@ -282,7 +389,7 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
     try {
       await completeDeliveryOrder(orderId);
       notify(`Đơn #${orderId}: Giao hàng THÀNH CÔNG (COMPLETED)!`);
-      await loadAllData();
+      await Promise.all([loadAllData(), loadDriversPage()]);
     } catch (err) {
       notify(getErrorMessage(err), 'error');
     }
@@ -292,7 +399,7 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
     try {
       await failDeliveryOrder(orderId);
       notify(`Đơn #${orderId}: Đã đánh dấu GIAO THẤT BẠI (FAILED).`);
-      await loadAllData();
+      await Promise.all([loadAllData(), loadDriversPage()]);
     } catch (err) {
       notify(getErrorMessage(err), 'error');
     }
@@ -314,15 +421,19 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
 
     setOptimizing(true);
     try {
-      const trip = await optimizeTripRoute(depot.id, targetIds);
+      const driverIdToAssign =
+        selectedDriverId !== 'AUTO' ? Number(selectedDriverId) : null;
+      const trip = await optimizeTripRoute(depot.id, targetIds, driverIdToAssign);
       setActiveTrip(trip);
       setSelectedOrderIds([]);
+      setSelectedDriverId('AUTO');
+      const driverLabel = trip?.driver?.name ? ` — Tài xế: ${trip.driver.name}` : '';
       notify(
         `Google OR-Tools đã tối ưu lộ trình cho ${targetIds.length} điểm giao (${(
           (trip?.totalDistance || 0) / 1000
-        ).toFixed(2)} km)!`
+        ).toFixed(2)} km)${driverLabel}!`
       );
-      await loadAllData();
+      await Promise.all([loadAllData(), loadDriversPage()]);
     } catch (err) {
       notify(`Lỗi gọi OR-Tools Solver: ${getErrorMessage(err)}`, 'error');
     } finally {
@@ -571,6 +682,116 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
     setProductPage(1);
   };
 
+  const handleOpenCreateDriver = () => {
+    setDriverModalMode('create');
+    setEditingDriver(null);
+    setDriverForm(INITIAL_DRIVER_FORM);
+    setShowDriverModal(true);
+  };
+
+  const handleOpenEditDriver = (driver: Driver) => {
+    setDriverModalMode('edit');
+    setEditingDriver(driver);
+    setDriverForm(driverToFormState(driver));
+    setShowDriverModal(true);
+  };
+
+  const handleSubmitDriver = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!driverForm.name.trim()) {
+      notify('Vui lòng nhập họ tên tài xế.', 'error');
+      return;
+    }
+    if (!driverForm.email.trim() || !driverForm.email.includes('@')) {
+      notify('Vui lòng nhập email hợp lệ.', 'error');
+      return;
+    }
+    if (!driverForm.phone.trim()) {
+      notify('Vui lòng nhập số điện thoại tài xế.', 'error');
+      return;
+    }
+    if (!driverForm.licensePlate.trim()) {
+      notify('Vui lòng nhập biển số xe.', 'error');
+      return;
+    }
+
+    setSavingDriver(true);
+    try {
+      if (driverModalMode === 'edit' && editingDriver) {
+        await updateDriver(editingDriver.id, driverForm);
+        notify(`Đã cập nhật tài xế "${driverForm.name.trim()}" thành công!`);
+      } else {
+        await createDriver(driverForm);
+        notify(`Đã thêm tài xế "${driverForm.name.trim()}" thành công!`);
+      }
+      setShowDriverModal(false);
+      setEditingDriver(null);
+      setDriverForm(INITIAL_DRIVER_FORM);
+      await Promise.all([loadDriversPage(), loadAvailableDrivers()]);
+    } catch (err) {
+      notify(getErrorMessage(err), 'error');
+    } finally {
+      setSavingDriver(false);
+    }
+  };
+
+  const handleToggleDriverActive = async (driver: Driver) => {
+    try {
+      const nextIsActive = !driver.isActive;
+      const nextStatus = !nextIsActive
+        ? driver.status === 'ON_DELIVERY'
+          ? 'ON_DELIVERY'
+          : 'OFFLINE'
+        : driver.status === 'OFFLINE'
+          ? 'AVAILABLE'
+          : driver.status;
+      const nextForm: DriverFormState = {
+        ...driverToFormState(driver),
+        isActive: nextIsActive,
+        status: nextStatus,
+      };
+      await updateDriver(driver.id, nextForm);
+      notify(
+        nextIsActive
+          ? `Đã kích hoạt lại tài xế "${driver.name}".`
+          : `Đã tạm ngưng hoạt động tài xế "${driver.name}".`
+      );
+      await Promise.all([loadDriversPage(), loadAvailableDrivers()]);
+    } catch (err) {
+      notify(getErrorMessage(err), 'error');
+    }
+  };
+
+  const handleDeleteDriver = async (driver: Driver) => {
+    try {
+      await deleteDriver(driver.id);
+      notify(`Đã xóa tài xế "${driver.name}" thành công!`);
+      await Promise.all([loadDriversPage(), loadAvailableDrivers()]);
+    } catch (err) {
+      notify(getErrorMessage(err), 'error');
+    }
+  };
+
+  const handleDriverSearchChange = (value: string) => {
+    setDriverSearch(value);
+    setDriverPage(1);
+  };
+
+  const handleDriverStatusFilterChange = (value: string) => {
+    setDriverStatusFilter(value);
+    setDriverPage(1);
+  };
+
+  const handleDriverVehicleFilterChange = (value: string) => {
+    setDriverVehicleFilter(value);
+    setDriverPage(1);
+  };
+
+  const handleDriverPageSizeChange = (nextSize: number) => {
+    setDriverPageSize(nextSize);
+    setDriverPage(1);
+  };
+
   return (
     <div className="min-h-screen flex flex-col bg-body text-primary">
       <Header
@@ -582,6 +803,7 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
         onThemeModeChange={onThemeModeChange}
         counts={counts}
         productsCount={productSummary.totalProducts}
+        driversCount={driverSummary.totalDrivers}
         loading={loading}
         onOpenNewOrder={handleOpenCreateOrder}
         onSeedOrders={handleSeedOrders}
@@ -599,6 +821,9 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
             selectedOrderIds={selectedOrderIds}
             onToggleSelectOrder={toggleSelectOrder}
             onToggleSelectAllPacked={toggleSelectAllPacked}
+            availableDrivers={availableDrivers}
+            selectedDriverId={selectedDriverId}
+            onSelectedDriverIdChange={setSelectedDriverId}
             loading={loading}
             optimizing={optimizing}
             onBatchPreparePacked={handleBatchPreparePacked}
@@ -628,7 +853,7 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
             />
           </section>
         </main>
-      ) : (
+      ) : activePage === 'products' ? (
         <main className="flex-1 max-w-[1600px] w-full mx-auto px-4 sm:px-6 py-5">
           <ProductManagementPage
             role={role}
@@ -646,6 +871,28 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
             onEditProduct={handleOpenEditProduct}
             onToggleActive={handleToggleProductActive}
             onDeleteProduct={handleDeleteProduct}
+          />
+        </main>
+      ) : (
+        <main className="flex-1 max-w-[1600px] w-full mx-auto px-4 sm:px-6 py-5">
+          <DriverManagementPage
+            role={role}
+            drivers={drivers}
+            pagination={driverPagination}
+            summary={driverSummary}
+            searchQuery={driverSearch}
+            onSearchQueryChange={handleDriverSearchChange}
+            statusFilter={driverStatusFilter}
+            onStatusFilterChange={handleDriverStatusFilterChange}
+            vehicleTypeFilter={driverVehicleFilter}
+            onVehicleTypeFilterChange={handleDriverVehicleFilterChange}
+            onPageChange={setDriverPage}
+            onPageSizeChange={handleDriverPageSizeChange}
+            loading={loadingDrivers}
+            onOpenCreateDriver={handleOpenCreateDriver}
+            onEditDriver={handleOpenEditDriver}
+            onToggleActive={handleToggleDriverActive}
+            onDeleteDriver={handleDeleteDriver}
           />
         </main>
       )}
@@ -683,6 +930,22 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
         onFormChange={setProductForm}
         submitting={savingProduct}
         onSubmit={handleSubmitProduct}
+      />
+
+      <DriverFormModal
+        isOpen={showDriverModal}
+        onOpenChange={(open) => {
+          setShowDriverModal(open);
+          if (!open) {
+            setEditingDriver(null);
+          }
+        }}
+        mode={driverModalMode}
+        editingDriver={editingDriver}
+        form={driverForm}
+        onFormChange={setDriverForm}
+        submitting={savingDriver}
+        onSubmit={handleSubmitDriver}
       />
     </div>
   );

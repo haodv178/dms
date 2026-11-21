@@ -2,11 +2,12 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import authRoutes from './routes/auth.routes';
+import driverRoutes from './routes/driver.routes';
 import orderRoutes from './routes/order.routes';
 import productRoutes from './routes/product.routes';
 import tripRoutes from './routes/trip.routes';
 import prisma from './lib/prisma';
-import { runSeed, seedProducts } from './lib/seeder';
+import { runSeed, seedDrivers, seedProducts } from './lib/seeder';
 
 dotenv.config();
 
@@ -25,6 +26,7 @@ app.get('/api/health', (_req, res) => {
 });
 
 app.use('/api', authRoutes);
+app.use('/api/drivers', driverRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api/trips', tripRoutes);
@@ -41,6 +43,11 @@ async function bootstrap() {
       if (productCount === 0) {
         console.log('Empty product catalog detected. Seeding sample products...');
         await seedProducts(prisma);
+      }
+      const driverProfileCount = await prisma.driverProfile.count();
+      if (driverProfileCount === 0) {
+        console.log('Empty driver profiles detected. Seeding sample drivers...');
+        await seedDrivers(prisma);
       }
     }
   } catch (err) {

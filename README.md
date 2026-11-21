@@ -87,21 +87,23 @@ doan/
 │   ├── package.json
 │   ├── tsconfig.json
 │   ├── prisma/
-│   │   ├── schema.prisma        # Định nghĩa 6 bảng dữ liệu PostgreSQL (gồm Product)
+│   │   ├── schema.prisma        # Định nghĩa 7 bảng dữ liệu PostgreSQL (gồm Product & DriverProfile)
 │   │   ├── seed.ts              # Script nạp dữ liệu mẫu qua CLI
 │   │   └── seed-1000-products.ts # Script sinh 1.000 sản phẩm mẫu vào danh mục kho
 │   └── src/
-│       ├── index.ts             # Entrypoint Express & tự động seed khi DB/sản phẩm trống
+│       ├── index.ts             # Entrypoint Express & tự động seed khi DB/sản phẩm/tài xế trống
 │       ├── lib/
 │       │   ├── prisma.ts        # Khởi tạo Prisma Client
-│       │   └── seeder.ts        # Logic tạo 1 Kho (Depot), 3 Users, 16 Sản phẩm & 10 Đơn hàng mẫu
+│       │   └── seeder.ts        # Logic tạo 1 Kho (Depot), Users, 5 Tài xế, 16 Sản phẩm & 10 Đơn hàng mẫu
 │       ├── controllers/
 │       │   ├── auth.controller.ts    # Login, Me, System Overview, Seed API
-│       │   ├── order.controller.ts   # Tạo/sửa đơn hàng (chọn từ danh mục) & chuyển trạng thái
+│       │   ├── driver.controller.ts  # CRUD tài xế (User + DriverProfile), lọc trạng thái/loại xe & phân trang server
+│       │   ├── order.controller.ts   # Tạo/sửa đơn hàng (chọn từ danh mục), chuyển trạng thái & tự giải phóng tài xế
 │       │   ├── product.controller.ts # CRUD sản phẩm, thống kê KPI & phân trang phía server
-│       │   └── trip.controller.ts    # Gọi Python OR-Tools Solver & tạo chuyến xe (Trip)
+│       │   └── trip.controller.ts    # Gọi Python OR-Tools Solver, gán tài xế & chuyển trạng thái ON_DELIVERY
 │       └── routes/
 │           ├── auth.routes.ts
+│           ├── driver.routes.ts
 │           ├── order.routes.ts
 │           ├── product.routes.ts
 │           └── trip.routes.ts
@@ -122,17 +124,19 @@ doan/
         ├── astryx-themes.ts     # Module theme do `astryx theme add neutral` sinh tự động
         ├── App.tsx              # Root <Theme>, <LayerProvider>, điều hướng trang & Toast
         ├── types/
-        │   └── dms.ts           # Domain types (Order, Product, Pagination), metadata & format tiền tệ
+        │   └── dms.ts           # Domain types (Order, Product, Driver, Pagination), metadata & format tiền tệ
         ├── api/
-        │   └── dmsApi.ts        # Axios client gọi REST API Backend (Orders, Trips, Products)
+        │   └── dmsApi.ts        # Axios client gọi REST API Backend (Orders, Trips, Products, Drivers)
         └── components/
-            ├── Header.tsx                # Top Bar: Chuyển trang Đơn hàng/Sản phẩm, Role, Theme, Seed/New
-            ├── OrderTable.tsx            # Action banner OR-Tools, TabList lọc trạng thái & bảng đơn (kèm nút Sửa)
+            ├── Header.tsx                # Top Bar: Chuyển trang Đơn hàng/Sản phẩm/Tài xế, Role, Theme, Seed/New
+            ├── OrderTable.tsx            # Action banner OR-Tools (kèm chọn tài xế), TabList lọc trạng thái & bảng đơn
             ├── OrderFormModal.tsx        # Hộp thoại Tạo/Sửa đơn hàng: Mini-map Leaflet + chọn sản phẩm danh mục
             ├── RouteMap.tsx              # Bản đồ Leaflet OSM / CARTO Dark Matter theo theme
             ├── ActiveTripPanel.tsx       # Chi tiết chuyến xe & danh sách điểm dừng tối ưu
             ├── ProductManagementPage.tsx # Trang Quản lý Sản phẩm: KPI, tìm kiếm, lọc danh mục & phân trang server
-            └── ProductFormModal.tsx      # Hộp thoại Astryx Dialog thêm/sửa sản phẩm trong kho
+            ├── ProductFormModal.tsx      # Hộp thoại Astryx Dialog thêm/sửa sản phẩm trong kho
+            ├── DriverManagementPage.tsx  # Trang Quản lý Tài xế: KPI, tìm kiếm, lọc trạng thái/loại xe & phân trang server
+            └── DriverFormModal.tsx       # Hộp thoại Astryx Dialog thêm/sửa tài khoản & phương tiện tài xế
 ```
 
 ---
@@ -195,14 +199,35 @@ enum OrderStatus {
   FAILED
 }
 
+enum DriverStatus {
+  AVAILABLE
+  ON_DELIVERY
+  OFFLINE
+}
+
 model User {
-  id        Int      @id @default(autoincrement())
-  email     String   @unique
-  password  String
-  name      String
-  role      Role     @default(WAREHOUSE)
-  trips     Trip[]
-  createdAt DateTime @default(now())
+  id            Int            @id @default(autoincrement())
+  email         String         @unique
+  password      String
+  name          String
+  role          Role           @default(WAREHOUSE)
+  driverProfile DriverProfile?
+  trips         Trip[]
+  createdAt     DateTime       @default(now())
+}
+
+model DriverProfile {
+  id           Int          @id @default(autoincrement())
+  userId       Int          @unique
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  phone        String
+  vehicleType  String       @default("Xe máy")
+  licensePlate String
+  status       DriverStatus @default(AVAILABLE)
+  isActive     Boolean      @default(true)
+  notes        String?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
 }
 
 model Store {
@@ -286,10 +311,10 @@ model Product {
 - `GET /api/system/overview`: Lấy danh sách Kho (`stores`) và Người dùng (`users`).
 - `POST /api/seed`: Reset và nạp lại dữ liệu mẫu gồm:
   - **1 Kho xuất phát (Depot):** `Lotte Mart Quận 7 (Depot)` (`10.7423, 106.7024`)
-  - **3 Tài khoản mẫu:**
+  - **3 Tài khoản mẫu chính + 5 Tài xế mẫu kèm hồ sơ phương tiện (`DriverProfile`):**
     - `admin@dms.vn` (Mật khẩu: `123`, Role: `ADMIN`)
     - `kho@dms.vn` (Mật khẩu: `123`, Role: `WAREHOUSE`)
-    - `taixe@dms.vn` (Mật khẩu: `123`, Role: `DRIVER`)
+    - `taixe@dms.vn`, `taixe.binh@dms.vn`, `taixe.cuong@dms.vn`, `taixe.dung@dms.vn`, `taixe.hung@dms.vn` (Mật khẩu: `123`, Role: `DRIVER`)
   - **10 Đơn hàng mẫu (`ORD-101` ➔ `ORD-110`)** có tọa độ GPS thực tế quanh khu vực Quận 7, Quận 4, Nhà Bè.
 
 #### Quản lý Đơn hàng
@@ -307,20 +332,27 @@ model Product {
 - `PUT /api/products/:id`: Cập nhật thông tin sản phẩm (SKU, tên, danh mục, đơn vị tính, giá bán, tồn kho, trạng thái kinh doanh `isActive`).
 - `DELETE /api/products/:id`: Xóa sản phẩm khỏi danh mục.
 
+#### Quản lý Tài xế (Driver Management & Fleet Status)
+- `GET /api/drivers`: Danh sách tài xế (gộp thông tin `User` + `DriverProfile` + chuyến đang chạy `activeTrip` + `totalTrips`), hỗ trợ phân trang phía server (`?page=1&limit=20`), tìm kiếm theo tên/email/SĐT/biển số (`?search=`), lọc trạng thái (`?status=AVAILABLE|ON_DELIVERY|OFFLINE`), lọc loại xe (`?vehicleType=`), và lọc nhanh tài xế sẵn sàng (`?availableOnly=true`). Trả về `data`, `pagination` và `summary` (`totalDrivers`, `availableDrivers`, `onDeliveryDrivers`, `inactiveDrivers`).
+- `GET /api/drivers/:id`: Xem chi tiết một tài xế.
+- `POST /api/drivers`: Tạo tài khoản tài xế (`role: DRIVER`, mật khẩu mặc định `123` nếu bỏ trống) cùng bản ghi `DriverProfile` (`phone`, `vehicleType`, `licensePlate`, `status`, `isActive`, `notes`), kiểm tra trùng email với mã lỗi `409`.
+- `PUT /api/drivers/:id`: Cập nhật thông tin tài khoản, mật khẩu tùy chọn, phương tiện, trạng thái vận hành và cờ hoạt động `isActive`.
+- `DELETE /api/drivers/:id`: Chặn xóa (`400`) nếu tài xế đang có chuyến `ASSIGNED` hoặc `IN_TRANSIT`; với các chuyến đã hoàn tất, tự động gỡ liên kết (`Trip.driverId = null`) trước khi xóa `User` (cascade sang `DriverProfile`).
+
 #### Điều phối & Tối ưu Lộ trình (OR-Tools Integration)
 - `POST /api/trips/optimize`:
-  - **Input:** `{ "storeId": 1, "orderIds": [1, 2, 3], "driverId": 3 }`
+  - **Input:** `{ "storeId": 1, "orderIds": [1, 2, 3], "driverId": 3 }` (`driverId` tùy chọn — nếu bỏ trống sẽ ưu tiên tự động chọn tài xế `AVAILABLE` đang hoạt động).
   - **Luồng xử lý:**
-    1. Truy vấn tọa độ Depot (`Store`) và tọa độ các đơn hàng `PACKED` được chọn.
+    1. Truy vấn tọa độ Depot (`Store`), kiểm tra tài xế hợp lệ và lấy tọa độ các đơn hàng `PACKED` được chọn.
     2. Gọi `POST http://python-solver:8090/solve-vrp`.
     3. Nhận danh sách điểm dừng đã sắp xếp tối ưu (`sequence: 1, 2, 3...`) và tổng quãng đường (`total_distance_meters`).
-    4. Khởi tạo bản ghi `Trip`, cập nhật `tripId`, `deliverySequence` và chuyển trạng thái các đơn hàng sang `DELIVERING`.
+    4. Khởi tạo bản ghi `Trip`, cập nhật trạng thái tài xế sang `ON_DELIVERY`, cập nhật `tripId`, `deliverySequence` và chuyển trạng thái các đơn hàng sang `DELIVERING`.
 - `GET /api/trips`: Danh sách các chuyến xe.
 - `GET /api/trips/my-active`: Lấy chuyến xe đang thực hiện (hoặc chuyến mới nhất) để hiển thị lộ trình trên bản đồ.
 
 #### Thực thi Giao hàng (Driver Execution)
-- `PATCH /api/orders/:id/complete-delivery`: Chuyển trạng thái đơn sang `COMPLETED` (tự động hoàn tất `Trip` khi toàn bộ đơn trong chuyến đã giao xong).
-- `PATCH /api/orders/:id/fail-delivery`: Chuyển trạng thái đơn sang `FAILED`.
+- `PATCH /api/orders/:id/complete-delivery`: Chuyển trạng thái đơn sang `COMPLETED` (tự động hoàn tất `Trip` khi toàn bộ đơn trong chuyến đã giao xong và tự động chuyển tài xế về `AVAILABLE` nếu không còn chuyến hoạt động khác).
+- `PATCH /api/orders/:id/fail-delivery`: Chuyển trạng thái đơn sang `FAILED` (tự động hoàn tất `Trip` và giải phóng tài xế về `AVAILABLE` nếu là đơn cuối cùng của chuyến).
 
 ---
 
@@ -368,7 +400,7 @@ model Product {
 Giao diện đơn trang (SPA) tại `http://localhost:5173` được xây dựng bằng **Meta Astryx Design System** (`@astryxdesign/core`, `@astryxdesign/theme-neutral`) kết hợp **Tailwind CSS v4** (qua Astryx Tailwind Bridge `@astryxdesign/core/tailwind-theme.css` và thứ tự `@layer` chuẩn), hỗ trợ đầy đủ **Light / System / Dark mode** và chia làm 3 khu vực trực quan:
 
 1. **Thanh Công Cụ Trên Cùng (Top Bar — `Header.tsx`):**
-   - **Page Switcher (`SegmentedControl`):** Chuyển đổi nhanh giữa 2 trang quản lý chính — **Đơn hàng** (`#orders`) và **Sản phẩm** (`#products`), hiển thị tổng số lượng tương ứng.
+   - **Page Switcher (`SegmentedControl`):** Chuyển đổi nhanh giữa 3 trang quản lý chính — **Đơn hàng** (`#orders`), **Sản phẩm** (`#products`) và **Tài xế** (`#drivers`), hiển thị tổng số lượng tương ứng.
    - **Role Switcher (`Selector`):** Chuyển đổi tức thì giữa 3 vai trò (`Quản lý / Điều phối - ADMIN`, `Nhân viên Kho - WAREHOUSE`, `Tài xế Giao hàng - DRIVER`) mà không cần đăng xuất/đăng nhập lại.
    - **Theme Mode Switcher (`SegmentedControl`):** Chuyển đổi chế độ giao diện **Sáng / Hệ thống / Tối** (lưu trong `localStorage`), tự động đồng bộ toàn bộ token màu Astryx và lớp bản đồ Leaflet.
    - **Tạo đơn mới (`Button` + `Dialog`):** Mở hộp thoại thống nhất cho cả Tạo và Sửa đơn hàng (`OrderFormModal.tsx`).
@@ -376,7 +408,7 @@ Giao diện đơn trang (SPA) tại `http://localhost:5173` được xây dựng
 2. **Bảng Điều Phối, Tạo & Chỉnh Sửa Đơn Hàng (`OrderTable.tsx` & `OrderFormModal.tsx`):**
    - Các tab lọc đơn hàng theo trạng thái (`TabList` / `Tab`) kèm số lượng thực tế và chọn tất cả đơn `PACKED` (`CheckboxInput` hỗ trợ trạng thái `indeterminate`).
    - Nút tiện ích **"Đóng gói nhanh"** giúp chuyển nhanh các đơn `NEW`/`PICKING` sang `PACKED` khi muốn demo ngay thuật toán OR-Tools.
-   - Nút điểm nhấn **"Tối ưu hóa lộ trình với Google OR-Tools"** khi chọn các đơn `PACKED`.
+   - Bộ chọn **Tài xế giao hàng (`Selector`)** hiển thị danh sách tài xế đang sẵn sàng (`AVAILABLE`) kèm loại xe & biển số (hoặc tự động chọn) ngay cạnh nút **"Tối ưu hóa lộ trình với Google OR-Tools"**.
    - Bảng đơn hàng (`Table`, `Badge`, `Button`, `IconButton`) với nút **Chỉnh sửa đơn hàng** (hiện cho `ADMIN` và `WAREHOUSE` với các đơn ở trạng thái `NEW`, `PICKING`, `PACKED`; ẩn với `DRIVER`) cùng các nút chuyển trạng thái và thông báo `useToast()`.
    - **Hộp thoại Tạo/Sửa Đơn Hàng (`OrderFormModal.tsx`):**
      - Sử dụng cấu trúc Astryx `Dialog` + `Layout` (`LayoutContent` / `LayoutFooter`) để nút Lưu/Hủy luôn cố định ở chân hộp thoại.
@@ -394,6 +426,11 @@ Giao diện đơn trang (SPA) tại `http://localhost:5173` được xây dựng
    - **Tìm kiếm & Lọc:** Tìm kiếm theo tên/SKU (debounce `250ms`) và lọc theo danh mục sản phẩm.
    - **Phân trang phía server (`@astryxdesign/core/Pagination`):** Điều hướng theo số trang kèm dấu `...`, nút Trước/Sau và bộ chọn số dòng mỗi trang (`10 / 20 / 50 / 100`).
    - **Thao tác CRUD:** Thêm sản phẩm, chỉnh sửa (`ProductFormModal.tsx`), bật/tắt trạng thái đang bán và xóa sản phẩm có hộp thoại xác nhận (dành cho `ADMIN` & `WAREHOUSE`; `DRIVER` ở chế độ chỉ xem).
+5. **Trang Quản Lý Tài Xế (`DriverManagementPage.tsx` & `DriverFormModal.tsx`):**
+   - **4 thẻ KPI tổng quan:** Tổng tài xế, Đang sẵn sàng (`AVAILABLE`), Đang giao hàng (`ON_DELIVERY`), Ngừng hoạt động (tính từ API `summary`).
+   - **Tìm kiếm & Lọc:** Tìm kiếm theo tên/SĐT/email/biển số (debounce `250ms`), lọc theo trạng thái vận hành (`AVAILABLE`, `ON_DELIVERY`, `OFFLINE`) và loại xe (`Xe máy`, `Xe tải nhỏ`, `Xe van`).
+   - **Thông tin chuyến giao & Phân trang server:** Hiển thị mã chuyến đang chạy (`TRIP-...`) cùng tổng số chuyến của mỗi tài xế, hỗ trợ phân trang phía server (`10 / 20 / 50 / 100`).
+   - **Phân quyền & Thao tác CRUD:** Chỉ `ADMIN` được thêm, chỉnh sửa (`DriverFormModal.tsx`), bật/tắt hoạt động và xóa tài xế (tự động khóa nút xóa khi tài xế đang có chuyến hoạt động); `WAREHOUSE` và `DRIVER` ở chế độ chỉ xem.
 
 ---
 
@@ -448,6 +485,9 @@ curl -X PATCH http://localhost:3000/api/orders/1/complete-delivery
 
 # 6. Truy vấn danh sách sản phẩm có phân trang & tìm kiếm
 curl "http://localhost:3000/api/products?page=1&limit=20&search=G%E1%BA%A1o"
+
+# 7. Truy vấn danh sách tài xế đang sẵn sàng
+curl "http://localhost:3000/api/drivers?page=1&limit=20&status=AVAILABLE"
 ```
 
 #### Nạp nhanh 1.000 sản phẩm mẫu để kiểm thử phân trang:

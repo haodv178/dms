@@ -1,8 +1,13 @@
 import axios from 'axios';
 import {
   computeOrderFormTotal,
+  type Driver,
+  type DriverFormState,
+  type DriverPagination,
+  type DriverSummary,
   type Order,
   type OrderFormState,
+  type PaginatedDriversResponse,
   type PaginatedProductsResponse,
   type Product,
   type ProductFormState,
@@ -55,10 +60,15 @@ export async function failDeliveryOrder(orderId: number): Promise<void> {
   await axios.patch(`${API_BASE}/orders/${orderId}/fail-delivery`);
 }
 
-export async function optimizeTripRoute(storeId: number, orderIds: number[]): Promise<Trip> {
+export async function optimizeTripRoute(
+  storeId: number,
+  orderIds: number[],
+  driverId?: number | null
+): Promise<Trip> {
   const res = await axios.post(`${API_BASE}/trips/optimize`, {
     storeId,
     orderIds,
+    ...(driverId ? { driverId } : {}),
   });
   return res.data.data as Trip;
 }
@@ -161,6 +171,79 @@ export async function updateProduct(
 
 export async function deleteProduct(productId: number): Promise<void> {
   await axios.delete(`${API_BASE}/products/${productId}`);
+}
+
+export interface FetchDriversParams {
+  page?: number;
+  limit?: number;
+  search?: string;
+  status?: string;
+  vehicleType?: string;
+  activeOnly?: boolean;
+  availableOnly?: boolean;
+}
+
+export async function fetchDrivers(
+  params: FetchDriversParams = {}
+): Promise<PaginatedDriversResponse> {
+  const query: Record<string, string | number | boolean> = {};
+  if (params.page !== undefined) query.page = params.page;
+  if (params.limit !== undefined) query.limit = params.limit;
+  if (params.search && params.search.trim()) query.search = params.search.trim();
+  if (params.status && params.status !== 'ALL') query.status = params.status;
+  if (params.vehicleType && params.vehicleType !== 'ALL') {
+    query.vehicleType = params.vehicleType;
+  }
+  if (params.activeOnly) query.activeOnly = true;
+  if (params.availableOnly) query.availableOnly = true;
+
+  const res = await axios.get(`${API_BASE}/drivers`, { params: query });
+  const items = (res.data?.data as Driver[]) || [];
+  const pagination: DriverPagination = res.data?.pagination ?? {
+    page: params.page ?? 1,
+    limit: params.limit ?? items.length,
+    total: items.length,
+    totalPages: 1,
+  };
+  const summary: DriverSummary = res.data?.summary ?? {
+    totalDrivers: items.length,
+    availableDrivers: items.filter((d) => d.isActive && d.status === 'AVAILABLE').length,
+    onDeliveryDrivers: items.filter((d) => d.status === 'ON_DELIVERY').length,
+    inactiveDrivers: items.filter((d) => !d.isActive).length,
+  };
+
+  return { items, pagination, summary };
+}
+
+function serializeDriverPayload(form: DriverFormState) {
+  return {
+    name: form.name.trim(),
+    email: form.email.trim().toLowerCase(),
+    ...(form.password.trim() ? { password: form.password.trim() } : {}),
+    phone: form.phone.trim(),
+    vehicleType: form.vehicleType.trim() || 'Xe máy',
+    licensePlate: form.licensePlate.trim().toUpperCase(),
+    status: form.status,
+    isActive: form.isActive,
+    notes: form.notes.trim(),
+  };
+}
+
+export async function createDriver(form: DriverFormState): Promise<Driver> {
+  const res = await axios.post(`${API_BASE}/drivers`, serializeDriverPayload(form));
+  return res.data.data as Driver;
+}
+
+export async function updateDriver(driverId: number, form: DriverFormState): Promise<Driver> {
+  const res = await axios.put(
+    `${API_BASE}/drivers/${driverId}`,
+    serializeDriverPayload(form)
+  );
+  return res.data.data as Driver;
+}
+
+export async function deleteDriver(driverId: number): Promise<void> {
+  await axios.delete(`${API_BASE}/drivers/${driverId}`);
 }
 
 export function getErrorMessage(err: unknown): string {

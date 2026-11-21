@@ -22,14 +22,35 @@ enum OrderStatus {
   FAILED
 }
 
+enum DriverStatus {
+  AVAILABLE
+  ON_DELIVERY
+  OFFLINE
+}
+
 model User {
-  id        Int      @id @default(autoincrement())
-  email     String   @unique
-  password  String
-  name      String
-  role      Role     @default(WAREHOUSE)
-  trips     Trip[]
-  createdAt DateTime @default(now())
+  id            Int            @id @default(autoincrement())
+  email         String         @unique
+  password      String
+  name          String
+  role          Role           @default(WAREHOUSE)
+  driverProfile DriverProfile?
+  trips         Trip[]
+  createdAt     DateTime       @default(now())
+}
+
+model DriverProfile {
+  id           Int          @id @default(autoincrement())
+  userId       Int          @unique
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  phone        String
+  vehicleType  String       @default("Xe máy")
+  licensePlate String
+  status       DriverStatus @default(AVAILABLE)
+  isActive     Boolean      @default(true)
+  notes        String?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
 }
 
 model Store {
