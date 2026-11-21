@@ -113,7 +113,6 @@ resource solverApp 'Microsoft.App/containerApps@2024-03-01' = {
       ingress: {
         external: false
         targetPort: 8090
-        allowInsecure: true
         transport: 'auto'
       }
     }
@@ -183,7 +182,6 @@ resource backendApp 'Microsoft.App/containerApps@2024-03-01' = {
       ingress: {
         external: true
         targetPort: 3000
-        allowInsecure: false
         transport: 'auto'
       }
       secrets: [
@@ -221,7 +219,7 @@ resource backendApp 'Microsoft.App/containerApps@2024-03-01' = {
             }
             {
               name: 'PYTHON_SOLVER_URL'
-              value: 'http://${solverApp.name}'
+              value: 'https://${solverApp.properties.configuration.ingress.fqdn}'
             }
             {
               name: 'FRONTEND_ORIGIN'
@@ -274,5 +272,5 @@ resource backendApp 'Microsoft.App/containerApps@2024-03-01' = {
 }
 
 output backendUrl string = 'https://${backendApp.properties.configuration.ingress.fqdn}'
-output solverInternalUrl string = 'http://${solverApp.name}'
+output solverInternalUrl string = 'https://${solverApp.properties.configuration.ingress.fqdn}'
 output postgresHost string = postgresServer.properties.fullyQualifiedDomainName
