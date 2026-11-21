@@ -1,7 +1,9 @@
 import express from 'express';
 import cors from 'cors';
+import cookieParser from 'cookie-parser';
 import dotenv from 'dotenv';
 import authRoutes from './routes/auth.routes';
+import userRoutes from './routes/user.routes';
 import driverRoutes from './routes/driver.routes';
 import orderRoutes from './routes/order.routes';
 import productRoutes from './routes/product.routes';
@@ -10,13 +12,33 @@ import tripRoutes from './routes/trip.routes';
 import prisma from './lib/prisma';
 import { runSeed, seedDrivers, seedProducts } from './lib/seeder';
 import { ensureStoreDefaults } from './controllers/store.controller';
+import { ensureHashedUserPasswords } from './lib/auth';
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(cors());
+const allowedOrigins = (
+  process.env.FRONTEND_ORIGIN || 'http://localhost:5173,http://localhost:4173,http://localhost:8080'
+)
+  .split(',')
+  .map((o) => o.trim())
+  .filter(Boolean);
+
+app.use(
+  cors({
+    origin(origin, callback) {
+      // Allow requests with no origin (e.g., curl, mobile apps, same-origin)
+      if (!origin || allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+      return callback(new Error(`Origin ${origin} not allowed by CORS`));
+    },
+    credentials: true,
+  })
+);
+app.use(cookieParser());
 app.use(express.json());
 
 app.get('/api/health', (_req, res) => {
@@ -28,6 +50,7 @@ app.get('/api/health', (_req, res) => {
 });
 
 app.use('/api', authRoutes);
+app.use('/api/users', userRoutes);
 app.use('/api/drivers', driverRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/products', productRoutes);
@@ -53,6 +76,11 @@ async function bootstrap() {
         console.log('Empty driver profiles detected. Seeding sample drivers...');
         await seedDrivers(prisma);
       }
+    }
+
+    const hashedCount = await ensureHashedUserPasswords(prisma);
+    if (hashedCount > 0) {
+      console.log(`Hashed ${hashedCount} legacy plaintext user password(s) with bcrypt.`);
     }
   } catch (err) {
     console.warn('Database seed check warning:', err);

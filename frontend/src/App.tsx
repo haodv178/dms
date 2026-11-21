@@ -13,18 +13,22 @@ import {
   createOrder,
   createProduct,
   createStore,
+  createUser,
   deleteDriver,
   deleteProduct,
   deleteStore,
+  deleteUser,
   failDeliveryOrder,
   fetchDashboardData,
   fetchDrivers,
   fetchProducts,
   fetchStores,
+  fetchUsers,
   getErrorMessage,
   optimizeTripRoute,
   reassignTripDriver,
   reoptimizeTrip,
+  resetUserPassword,
   setDefaultStore,
   startPickingOrder,
   startTrip,
@@ -32,52 +36,65 @@ import {
   updateOrder,
   updateProduct,
   updateStore,
+  updateUser,
 } from './api/dmsApi';
+import { AuthProvider, useAuth } from './context/AuthContext';
 import { AssignDriverModal } from './components/AssignDriverModal';
 import { BulkAssignDriverModal } from './components/BulkAssignDriverModal';
+import { ChangePasswordModal } from './components/ChangePasswordModal';
 import { CreateTripModal } from './components/CreateTripModal';
 import { DepotFormModal } from './components/DepotFormModal';
 import { DepotManagementPage } from './components/DepotManagementPage';
 import { DriverFormModal } from './components/DriverFormModal';
 import { DriverManagementPage } from './components/DriverManagementPage';
 import { Header } from './components/Header';
+import { LoginPage } from './components/LoginPage';
 import { OrderFormModal } from './components/OrderFormModal';
 import { OrderTable } from './components/OrderTable';
 import { ProductFormModal } from './components/ProductFormModal';
 import { ProductManagementPage } from './components/ProductManagementPage';
 import { TripManagementPage } from './components/TripManagementPage';
+import { UserFormModal } from './components/UserFormModal';
+import { UserManagementPage } from './components/UserManagementPage';
 import {
   DEFAULT_DEPOT,
   INITIAL_DRIVER_FORM,
   INITIAL_ORDER_FORM,
   INITIAL_PRODUCT_FORM,
   INITIAL_STORE_FORM,
+  INITIAL_USER_FORM,
   MAX_DELIVERY_DISTANCE_KM,
+  canRoleAccessPage,
   createInitialProductForm,
   driverToFormState,
   haversineDistanceKm,
   orderToFormState,
   productToFormState,
   storeToFormState,
+  userToFormState,
   type ActivePage,
+  type AuthUser,
   type BulkOrderActionType,
   type Driver,
   type DriverFormState,
   type DriverPagination,
   type DriverSummary,
+  type ManagedUser,
   type Order,
   type OrderFormState,
   type Product,
   type ProductFormState,
   type ProductPagination,
   type ProductSummary,
-  type Role,
   type Store,
   type StoreFormState,
   type StorePagination,
   type StoreSummary,
   type ThemeMode,
   type Trip,
+  type UserFormState,
+  type UserPagination,
+  type UserSummary,
 } from './types/dms';
 
 const THEME_MODE_STORAGE_KEY = 'dms-astryx-theme-mode';
@@ -95,26 +112,65 @@ function readStoredThemeMode(): ThemeMode {
 }
 
 interface DmsDashboardProps {
+  user: AuthUser;
+  onLogout: () => Promise<void>;
   themeMode: ThemeMode;
   onThemeModeChange: (mode: ThemeMode) => void;
   isDarkMode: boolean;
 }
 
-function readInitialPage(): ActivePage {
+function readInitialPage(role: AuthUser['role']): ActivePage {
+  let candidate: ActivePage = 'orders';
   if (typeof window !== 'undefined') {
-    if (window.location.hash === '#trips') return 'trips';
-    if (window.location.hash === '#products') return 'products';
-    if (window.location.hash === '#drivers') return 'drivers';
-    if (window.location.hash === '#depots') return 'depots';
+    if (window.location.hash === '#trips') candidate = 'trips';
+    else if (window.location.hash === '#products') candidate = 'products';
+    else if (window.location.hash === '#drivers') candidate = 'drivers';
+    else if (window.location.hash === '#depots') candidate = 'depots';
+    else if (window.location.hash === '#users') candidate = 'users';
   }
-  return 'orders';
+  return canRoleAccessPage(role, candidate) ? candidate : 'orders';
 }
 
-function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboardProps) {
+function DmsDashboard({
+  user,
+  onLogout,
+  themeMode,
+  onThemeModeChange,
+  isDarkMode,
+}: DmsDashboardProps) {
   const showToast = useToast();
+  const role = user.role;
 
-  const [activePage, setActivePage] = useState<ActivePage>(readInitialPage);
-  const [role, setRole] = useState<Role>('ADMIN');
+  const [activePage, setActivePage] = useState<ActivePage>(() => readInitialPage(user.role));
+  const [showChangePasswordModal, setShowChangePasswordModal] = useState<boolean>(false);
+
+  const [users, setUsers] = useState<ManagedUser[]>([]);
+  const [userPagination, setUserPagination] = useState<UserPagination>({
+    page: 1,
+    limit: 20,
+    total: 0,
+    totalPages: 1,
+  });
+  const [userSummary, setUserSummary] = useState<UserSummary>({
+    totalUsers: 0,
+    activeUsers: 0,
+    inactiveUsers: 0,
+    adminCount: 0,
+    warehouseCount: 0,
+    driverCount: 0,
+  });
+  const [userPage, setUserPage] = useState<number>(1);
+  const [userPageSize, setUserPageSize] = useState<number>(20);
+  const [userSearch, setUserSearch] = useState<string>('');
+  const [debouncedUserSearch, setDebouncedUserSearch] = useState<string>('');
+  const [userRoleFilter, setUserRoleFilter] = useState<string>('ALL');
+  const [userStatusFilter, setUserStatusFilter] = useState<string>('ALL');
+  const [loadingUsers, setLoadingUsers] = useState<boolean>(false);
+  const [savingUser, setSavingUser] = useState<boolean>(false);
+  const [showUserModal, setShowUserModal] = useState<boolean>(false);
+  const [userModalMode, setUserModalMode] = useState<'create' | 'edit'>('create');
+  const [editingUser, setEditingUser] = useState<ManagedUser | null>(null);
+  const [userForm, setUserForm] = useState<UserFormState>(INITIAL_USER_FORM);
   const [orders, setOrders] = useState<Order[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [catalogProducts, setCatalogProducts] = useState<Product[]>([]);
@@ -225,13 +281,27 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
   const [driverForm, setDriverForm] = useState<DriverFormState>(INITIAL_DRIVER_FORM);
 
   const handleActivePageChange = (page: ActivePage) => {
-    setActivePage(page);
+    const safePage = canRoleAccessPage(role, page) ? page : 'orders';
+    setActivePage(safePage);
     try {
-      window.location.hash = `#${page}`;
+      window.location.hash = `#${safePage}`;
     } catch {
       // Ignore hash errors
     }
   };
+
+  useEffect(() => {
+    if (!canRoleAccessPage(role, activePage)) {
+      setActivePage('orders');
+    }
+  }, [role, activePage]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedUserSearch(userSearch);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [userSearch]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -388,14 +458,51 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
     [storePage, storePageSize, debouncedStoreSearch, storeStatusFilter, notify]
   );
 
+  const loadUsersPage = useCallback(
+    async (
+      page = userPage,
+      limit = userPageSize,
+      search = debouncedUserSearch,
+      roleFilterVal = userRoleFilter,
+      statusFilterVal = userStatusFilter
+    ) => {
+      if (!canRoleAccessPage(role, 'users')) return;
+      setLoadingUsers(true);
+      try {
+        const res = await fetchUsers({
+          page,
+          limit,
+          search,
+          role: roleFilterVal,
+          status: statusFilterVal,
+        });
+        setUsers(res.items);
+        setUserPagination(res.pagination);
+        setUserSummary(res.summary);
+        if (res.pagination.page !== page) {
+          setUserPage(res.pagination.page);
+        }
+      } catch (err) {
+        notify(`Không thể tải danh sách tài khoản: ${getErrorMessage(err)}`, 'error');
+      } finally {
+        setLoadingUsers(false);
+      }
+    },
+    [role, userPage, userPageSize, debouncedUserSearch, userRoleFilter, userStatusFilter, notify]
+  );
+
   const loadAllData = useCallback(async () => {
     setLoading(true);
     try {
-      const [data] = await Promise.all([
-        fetchDashboardData(),
-        loadCatalogProducts(),
-        loadAvailableDrivers(),
-      ]);
+      const secondaryPromises: Promise<unknown>[] = [];
+      if (canRoleAccessPage(role, 'products')) {
+        secondaryPromises.push(loadCatalogProducts());
+      }
+      if (canRoleAccessPage(role, 'drivers')) {
+        secondaryPromises.push(loadAvailableDrivers());
+      }
+
+      const [data] = await Promise.all([fetchDashboardData(), ...secondaryPromises]);
       setOrders(data.orders);
       setTrips(data.trips);
       if (data.depot) {
@@ -409,22 +516,24 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
     } finally {
       setLoading(false);
     }
-  }, [notify, loadCatalogProducts, loadAvailableDrivers]);
+  }, [role, notify, loadCatalogProducts, loadAvailableDrivers]);
 
   useEffect(() => {
     void loadAllData();
   }, [loadAllData]);
 
   useEffect(() => {
+    if (!canRoleAccessPage(role, 'products')) return;
     void loadProductsPage(
       productPage,
       productPageSize,
       debouncedProductSearch,
       productCategory
     );
-  }, [loadProductsPage, productPage, productPageSize, debouncedProductSearch, productCategory]);
+  }, [role, loadProductsPage, productPage, productPageSize, debouncedProductSearch, productCategory]);
 
   useEffect(() => {
+    if (!canRoleAccessPage(role, 'drivers')) return;
     void loadDriversPage(
       driverPage,
       driverPageSize,
@@ -434,6 +543,7 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
       driverStoreFilter
     );
   }, [
+    role,
     loadDriversPage,
     driverPage,
     driverPageSize,
@@ -444,8 +554,28 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
   ]);
 
   useEffect(() => {
+    if (!canRoleAccessPage(role, 'depots')) return;
     void loadStoresPage(storePage, storePageSize, debouncedStoreSearch, storeStatusFilter);
-  }, [loadStoresPage, storePage, storePageSize, debouncedStoreSearch, storeStatusFilter]);
+  }, [role, loadStoresPage, storePage, storePageSize, debouncedStoreSearch, storeStatusFilter]);
+
+  useEffect(() => {
+    if (!canRoleAccessPage(role, 'users')) return;
+    void loadUsersPage(
+      userPage,
+      userPageSize,
+      debouncedUserSearch,
+      userRoleFilter,
+      userStatusFilter
+    );
+  }, [
+    role,
+    loadUsersPage,
+    userPage,
+    userPageSize,
+    debouncedUserSearch,
+    userRoleFilter,
+    userStatusFilter,
+  ]);
 
   const handleStartPicking = async (orderId: number) => {
     try {
@@ -1163,13 +1293,110 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
     setStorePage(1);
   };
 
+  const handleOpenCreateUser = () => {
+    setUserModalMode('create');
+    setEditingUser(null);
+    setUserForm(INITIAL_USER_FORM);
+    setShowUserModal(true);
+  };
+
+  const handleOpenEditUser = (target: ManagedUser) => {
+    setUserModalMode('edit');
+    setEditingUser(target);
+    setUserForm(userToFormState(target));
+    setShowUserModal(true);
+  };
+
+  const handleSubmitUser = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!userForm.name.trim() || !userForm.email.trim()) {
+      notify('Vui lòng nhập đầy đủ họ tên và email.', 'error');
+      return;
+    }
+    if (userModalMode === 'create' && userForm.password.length < 6) {
+      notify('Mật khẩu phải có ít nhất 6 ký tự.', 'error');
+      return;
+    }
+
+    setSavingUser(true);
+    try {
+      if (userModalMode === 'edit' && editingUser) {
+        const updated = await updateUser(editingUser.id, userForm);
+        notify(`Đã cập nhật tài khoản "${updated.name}" thành công!`);
+      } else {
+        const created = await createUser(userForm);
+        notify(`Đã tạo tài khoản "${created.name}" thành công!`);
+      }
+      setShowUserModal(false);
+      setEditingUser(null);
+      await loadUsersPage();
+    } catch (err) {
+      notify(getErrorMessage(err), 'error');
+    } finally {
+      setSavingUser(false);
+    }
+  };
+
+  const handleToggleUserActive = async (target: ManagedUser) => {
+    try {
+      const updated = await updateUser(target.id, {
+        name: target.name,
+        email: target.email,
+        role: target.role,
+        isActive: !target.isActive,
+      });
+      notify(
+        updated.isActive
+          ? `Đã kích hoạt lại tài khoản "${updated.name}".`
+          : `Đã vô hiệu hóa tài khoản "${updated.name}" và thu hồi phiên đăng nhập.`
+      );
+      await loadUsersPage();
+    } catch (err) {
+      notify(getErrorMessage(err), 'error');
+    }
+  };
+
+  const handleResetUserPassword = async (target: ManagedUser, newPassword: string) => {
+    const res = await resetUserPassword(target.id, newPassword);
+    notify(res.message);
+  };
+
+  const handleDeleteUser = async (target: ManagedUser) => {
+    try {
+      await deleteUser(target.id);
+      notify(`Đã xóa tài khoản "${target.name}".`);
+      await loadUsersPage();
+    } catch (err) {
+      notify(getErrorMessage(err), 'error');
+    }
+  };
+
+  const handleUserSearchChange = (value: string) => {
+    setUserSearch(value);
+    setUserPage(1);
+  };
+
+  const handleUserRoleFilterChange = (value: string) => {
+    setUserRoleFilter(value);
+    setUserPage(1);
+  };
+
+  const handleUserStatusFilterChange = (value: string) => {
+    setUserStatusFilter(value);
+    setUserPage(1);
+  };
+
+  const handleUserPageSizeChange = (nextSize: number) => {
+    setUserPageSize(nextSize);
+    setUserPage(1);
+  };
+
   return (
     <div className="min-h-screen flex flex-col bg-body text-primary">
       <Header
+        user={user}
         activePage={activePage}
         onActivePageChange={handleActivePageChange}
-        role={role}
-        onRoleChange={setRole}
         themeMode={themeMode}
         onThemeModeChange={onThemeModeChange}
         counts={counts}
@@ -1177,7 +1404,12 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
         productsCount={productSummary.totalProducts}
         driversCount={driverSummary.totalDrivers}
         storesCount={storeSummary.totalStores}
+        usersCount={userSummary.totalUsers}
         onOpenNewOrder={handleOpenCreateOrder}
+        onOpenChangePassword={() => setShowChangePasswordModal(true)}
+        onLogout={() => {
+          void onLogout();
+        }}
       />
 
       {activePage === 'orders' ? (
@@ -1275,7 +1507,7 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
             onDeleteDriver={handleDeleteDriver}
           />
         </main>
-      ) : (
+      ) : activePage === 'depots' ? (
         <main className="flex-1 max-w-[1600px] w-full mx-auto px-4 sm:px-6 py-5">
           <DepotManagementPage
             role={role}
@@ -1299,6 +1531,29 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
             onInventoryUpdated={() => {
               void Promise.all([loadStoresPage(), loadProductsPage(), loadCatalogProducts()]);
             }}
+          />
+        </main>
+      ) : (
+        <main className="flex-1 max-w-[1600px] w-full mx-auto px-4 sm:px-6 py-5">
+          <UserManagementPage
+            currentUserId={user.id}
+            users={users}
+            pagination={userPagination}
+            summary={userSummary}
+            searchQuery={userSearch}
+            onSearchQueryChange={handleUserSearchChange}
+            roleFilter={userRoleFilter}
+            onRoleFilterChange={handleUserRoleFilterChange}
+            statusFilter={userStatusFilter}
+            onStatusFilterChange={handleUserStatusFilterChange}
+            onPageChange={setUserPage}
+            onPageSizeChange={handleUserPageSizeChange}
+            loading={loadingUsers}
+            onOpenCreateUser={handleOpenCreateUser}
+            onEditUser={handleOpenEditUser}
+            onToggleUserActive={handleToggleUserActive}
+            onResetPassword={handleResetUserPassword}
+            onDeleteUser={handleDeleteUser}
           />
         </main>
       )}
@@ -1418,7 +1673,63 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
         submitting={savingStore}
         onSubmit={handleSubmitStore}
       />
+
+      <UserFormModal
+        isOpen={showUserModal}
+        onOpenChange={(open) => {
+          setShowUserModal(open);
+          if (!open) {
+            setEditingUser(null);
+          }
+        }}
+        mode={userModalMode}
+        editingUser={editingUser}
+        currentUserId={user.id}
+        form={userForm}
+        onFormChange={setUserForm}
+        submitting={savingUser}
+        onSubmit={handleSubmitUser}
+      />
+
+      <ChangePasswordModal
+        isOpen={showChangePasswordModal}
+        onOpenChange={setShowChangePasswordModal}
+      />
     </div>
+  );
+}
+
+function AppGate({
+  themeMode,
+  onThemeModeChange,
+  isDarkMode,
+}: {
+  themeMode: ThemeMode;
+  onThemeModeChange: (mode: ThemeMode) => void;
+  isDarkMode: boolean;
+}) {
+  const { user, isInitializing, logout } = useAuth();
+
+  if (isInitializing) {
+    return (
+      <div className="min-h-screen bg-body text-primary flex items-center justify-center">
+        <div className="text-sm text-secondary">Đang khôi phục phiên đăng nhập...</div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <LoginPage />;
+  }
+
+  return (
+    <DmsDashboard
+      user={user}
+      onLogout={logout}
+      themeMode={themeMode}
+      onThemeModeChange={onThemeModeChange}
+      isDarkMode={isDarkMode}
+    />
   );
 }
 
@@ -1452,11 +1763,13 @@ export default function App() {
   return (
     <Theme theme={themes[defaultThemeSlug]} mode={themeMode}>
       <LayerProvider>
-        <DmsDashboard
-          themeMode={themeMode}
-          onThemeModeChange={handleThemeModeChange}
-          isDarkMode={isDarkMode}
-        />
+        <AuthProvider>
+          <AppGate
+            themeMode={themeMode}
+            onThemeModeChange={handleThemeModeChange}
+            isDarkMode={isDarkMode}
+          />
+        </AuthProvider>
       </LayerProvider>
     </Theme>
   );

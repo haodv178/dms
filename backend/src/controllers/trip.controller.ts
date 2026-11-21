@@ -275,6 +275,9 @@ export const getTrips = async (req: Request, res: Response) => {
     const search = typeof req.query.search === 'string' ? req.query.search.trim() : '';
 
     const whereClause: Prisma.TripWhereInput = {};
+    if (req.user?.role === Role.DRIVER) {
+      whereClause.driverId = req.user.id;
+    }
     if (status && status !== 'ALL') {
       whereClause.status = status;
     }
@@ -308,7 +311,12 @@ export const getTrips = async (req: Request, res: Response) => {
 
 export const getMyActiveTrip = async (req: Request, res: Response) => {
   try {
-    const driverId = req.query.driverId ? Number(req.query.driverId) : undefined;
+    const driverId =
+      req.user?.role === Role.DRIVER
+        ? req.user.id
+        : req.query.driverId
+          ? Number(req.query.driverId)
+          : undefined;
     const whereClause: Prisma.TripWhereInput = {
       status: { in: ['ASSIGNED', 'IN_TRANSIT'] },
     };
@@ -325,6 +333,7 @@ export const getMyActiveTrip = async (req: Request, res: Response) => {
     // Nếu không còn chuyến ASSIGNED/IN_TRANSIT thì lấy chuyến mới nhất để hiển thị trên bản đồ
     if (!activeTrip) {
       activeTrip = await prisma.trip.findFirst({
+        where: driverId ? { driverId } : undefined,
         include: TRIP_WITH_RELATIONS_INCLUDE,
         orderBy: { createdAt: 'desc' },
       });
@@ -346,6 +355,12 @@ export const startTrip = async (req: Request, res: Response) => {
     const trip = await prisma.trip.findUnique({ where: { id: tripId } });
     if (!trip) {
       return res.status(404).json({ success: false, message: 'Không tìm thấy chuyến xe.' });
+    }
+    if (req.user?.role === Role.DRIVER && trip.driverId !== req.user.id) {
+      return res.status(403).json({
+        success: false,
+        message: 'Bạn chỉ có thể bắt đầu chuyến xe được phân công cho mình.',
+      });
     }
 
     if (trip.status === 'COMPLETED') {

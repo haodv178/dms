@@ -1,5 +1,5 @@
 export type Role = 'ADMIN' | 'WAREHOUSE' | 'DRIVER';
-export type ActivePage = 'orders' | 'trips' | 'products' | 'drivers' | 'depots';
+export type ActivePage = 'orders' | 'trips' | 'products' | 'drivers' | 'depots' | 'users';
 export type DriverStatus = 'AVAILABLE' | 'ON_DELIVERY' | 'OFFLINE';
 export type TripStatus = 'ASSIGNED' | 'IN_TRANSIT' | 'COMPLETED';
 export type OrderStatus =
@@ -285,11 +285,11 @@ export function canRolePickAndPack(role: Role): boolean {
 }
 
 export function canRoleEditOrders(role: Role): boolean {
-  return role === 'ADMIN' || role === 'WAREHOUSE';
+  return role === 'ADMIN';
 }
 
 export function canRoleAssignDriver(role: Role): boolean {
-  return role === 'ADMIN' || role === 'WAREHOUSE';
+  return role === 'ADMIN';
 }
 
 export function canRoleManageDrivers(role: Role): boolean {
@@ -300,8 +300,12 @@ export function canRoleManageDepots(role: Role): boolean {
   return role === 'ADMIN';
 }
 
-export function canRoleCreateTrips(role: Role): boolean {
+export function canRoleEditDepotInventory(role: Role): boolean {
   return role === 'ADMIN' || role === 'WAREHOUSE';
+}
+
+export function canRoleCreateTrips(role: Role): boolean {
+  return role === 'ADMIN';
 }
 
 export function canRoleManageTrips(role: Role): boolean {
@@ -314,6 +318,24 @@ export function canRoleStartTrip(role: Role): boolean {
 
 export function canRoleUpdateStopDelivery(role: Role): boolean {
   return role === 'ADMIN' || role === 'DRIVER';
+}
+
+export function canRoleManageUsers(role: Role): boolean {
+  return role === 'ADMIN';
+}
+
+export function getAllowedPagesForRole(role: Role): ActivePage[] {
+  if (role === 'ADMIN') {
+    return ['orders', 'trips', 'products', 'drivers', 'depots', 'users'];
+  }
+  if (role === 'WAREHOUSE') {
+    return ['orders', 'trips', 'products', 'depots'];
+  }
+  return ['orders', 'trips'];
+}
+
+export function canRoleAccessPage(role: Role, page: ActivePage): boolean {
+  return getAllowedPagesForRole(role).includes(page);
 }
 
 export const INITIAL_ORDER_FORM: OrderFormState = {
@@ -706,6 +728,77 @@ export const TRIP_STATUS_TABS = [
   { key: 'IN_TRANSIT', label: 'Đang giao' },
   { key: 'COMPLETED', label: 'Hoàn thành' },
 ] as const;
+
+export interface AuthUser {
+  id: number;
+  email: string;
+  name: string;
+  role: Role;
+}
+
+export interface ManagedUser extends AuthUser {
+  isActive: boolean;
+  hasDriverProfile: boolean;
+  driverProfile?: {
+    id: number;
+    phone: string;
+    licensePlate: string;
+    vehicleType: string;
+    status: DriverStatus;
+    storeId: number;
+  } | null;
+  tripsCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UserPagination {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+}
+
+export interface UserSummary {
+  totalUsers: number;
+  activeUsers: number;
+  inactiveUsers: number;
+  adminCount: number;
+  warehouseCount: number;
+  driverCount: number;
+}
+
+export interface PaginatedUsersResponse {
+  items: ManagedUser[];
+  pagination: UserPagination;
+  summary: UserSummary;
+}
+
+export interface UserFormState {
+  name: string;
+  email: string;
+  password: string;
+  role: Role;
+  isActive: boolean;
+}
+
+export const INITIAL_USER_FORM: UserFormState = {
+  name: '',
+  email: '',
+  password: '',
+  role: 'WAREHOUSE',
+  isActive: true,
+};
+
+export function userToFormState(user: ManagedUser): UserFormState {
+  return {
+    name: user.name,
+    email: user.email,
+    password: '',
+    role: user.role,
+    isActive: user.isActive,
+  };
+}
 
 export function formatVND(val: string | number): string {
   return Number(val).toLocaleString('vi-VN', { style: 'currency', currency: 'VND' });

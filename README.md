@@ -87,28 +87,33 @@ doan/
 │   ├── package.json
 │   ├── tsconfig.json
 │   ├── prisma/
-│   │   ├── schema.prisma        # Định nghĩa 8 bảng dữ liệu PostgreSQL (gồm Product, DepotStock & DriverProfile gắn 1 Store)
+│   │   ├── schema.prisma        # Định nghĩa 9 bảng dữ liệu PostgreSQL (gồm User, RefreshToken, Product, DepotStock & DriverProfile gắn 1 Store)
 │   │   ├── migrate-depot-stocks.sql # Migration idempotent chuyển Product.stock cũ sang bảng DepotStock (Depot mặc định)
 │   │   ├── migrate-driver-depots.sql # Migration idempotent gán DriverProfile.storeId cũ sang Depot mặc định
 │   │   ├── seed.ts              # Script nạp dữ liệu mẫu qua CLI
 │   │   ├── seed-orders.ts       # Script sinh đơn hàng mẫu qua CLI (nhận số lượng đơn, mặc định 20)
 │   │   └── seed-1000-products.ts # Script sinh 1.000 sản phẩm mẫu kèm tồn kho theo từng depot
 │   └── src/
-│       ├── index.ts             # Entrypoint Express, tự động seed & đảm bảo điểm xuất phát mặc định
+│       ├── index.ts             # Entrypoint Express (CORS credentials, cookie-parser), tự động seed, đảm bảo depot mặc định & tự động hash bcrypt mật khẩu cũ
 │       ├── lib/
+│       │   ├── auth.ts          # Helper bcryptjs, JWT access token (15m), refresh token (7d, SHA-256 hash), cookie options & nâng cấp hash mật khẩu cũ
 │       │   ├── geo.ts           # Tính khoảng cách Haversine & kiểm tra bán kính giao hàng tối đa 5 km
 │       │   ├── inventory.ts     # Helper trừ/hoàn tồn kho atomic theo từng depot (chống âm kho)
 │       │   ├── prisma.ts        # Khởi tạo Prisma Client
-│       │   └── seeder.ts        # Logic tạo Kho mặc định (Depot), Users, 5 Tài xế (thuộc Depot mặc định), 16 Sản phẩm (kèm DepotStock) & 10 Đơn hàng mẫu
+│       │   └── seeder.ts        # Logic tạo Kho mặc định (Depot), Users (mật khẩu đã hash bcrypt), 5 Tài xế, 16 Sản phẩm (kèm DepotStock) & 10 Đơn hàng mẫu
+│       ├── middleware/
+│       │   └── auth.middleware.ts    # requireAuth (xác thực JWT & kiểm tra isActive), requireRole(...) & loginRateLimiter
 │       ├── controllers/
-│       │   ├── auth.controller.ts    # Login, Me, System Overview, Seed API
-│       │   ├── driver.controller.ts  # CRUD tài xế (User + DriverProfile bắt buộc 1 depot), lọc depot/trạng thái/loại xe & phân trang server
-│       │   ├── order.controller.ts   # Tạo/sửa đơn hàng (chọn depot, chặn > 5 km, trừ/hoàn tồn kho theo depot), chuyển trạng thái, gán tài xế cùng depot & bulk-action
+│       │   ├── auth.controller.ts    # Login, Refresh (token rotation + reuse detection), Logout, Me, Change Password, System Overview, Seed API (ADMIN)
+│       │   ├── user.controller.ts    # CRUD tài khoản người dùng, phân vai trò, kích hoạt/vô hiệu hóa & đặt lại mật khẩu (ADMIN)
+│       │   ├── driver.controller.ts  # CRUD tài xế (User + DriverProfile bắt buộc 1 depot, hash mật khẩu), lọc depot/trạng thái/loại xe & phân trang server
+│       │   ├── order.controller.ts   # Tạo/sửa đơn hàng (chọn depot, chặn > 5 km, trừ/hoàn tồn kho theo depot), chuyển trạng thái, gán tài xế cùng depot, scoping DRIVER & bulk-action
 │       │   ├── product.controller.ts # CRUD sản phẩm kèm tồn kho theo từng depot, lọc depot/danh mục, KPI & phân trang server
 │       │   ├── store.controller.ts   # CRUD điểm xuất phát (Multi-depot), đặt kho mặc định, thống kê đơn/chuyến/tài xế/tồn kho & API tồn kho từng depot
-│       │   └── trip.controller.ts    # Tối ưu/tạo chuyến OR-Tools (ràng buộc cùng depot & ≤ 5 km), xuất phát (IN_TRANSIT), đổi tài xế cùng depot, tối ưu lại & hủy chuyến
+│       │   └── trip.controller.ts    # Tối ưu/tạo chuyến OR-Tools (ràng buộc cùng depot & ≤ 5 km), xuất phát (IN_TRANSIT), đổi tài xế cùng depot, tối ưu lại, hủy chuyến & scoping DRIVER
 │       └── routes/
 │           ├── auth.routes.ts
+│           ├── user.routes.ts
 │           ├── driver.routes.ts
 │           ├── order.routes.ts
 │           ├── product.routes.ts
@@ -129,13 +134,21 @@ doan/
         ├── main.tsx             # Entrypoint (nạp index.css trước để giữ đúng @layer cascade)
         ├── index.css            # Astryx @layer cascade + Tailwind v4 bridge + Leaflet popup styles
         ├── astryx-themes.ts     # Module theme do `astryx theme add neutral` sinh tự động
-        ├── App.tsx              # Root <Theme>, <LayerProvider>, điều hướng trang & Toast
+        ├── App.tsx              # Root <Theme>, <LayerProvider>, <AuthProvider>, Auth Gate (LoginPage/Dashboard), điều hướng theo phân quyền & Toast
+        ├── context/
+        │   └── AuthContext.tsx  # Quản lý phiên đăng nhập, tự động khôi phục session qua refresh cookie, login/logout/changePassword
         ├── types/
-        │   └── dms.ts           # Domain types (Order, Product, Driver, Store, Pagination), Haversine 5 km, metadata & format tiền tệ
+        │   └── dms.ts           # Domain types (AuthUser, ManagedUser, Order, Product, Driver, Store, Pagination), RBAC helpers, Haversine 5 km & format tiền tệ
         ├── api/
-        │   └── dmsApi.ts        # Axios client gọi REST API Backend (Orders, Trips, Products, Drivers, Stores)
+        │   ├── httpClient.ts    # Axios instance (withCredentials: true), gắn Bearer token trong bộ nhớ & tự động refresh token khi gặp 401 (có hàng đợi request)
+        │   └── dmsApi.ts        # API client gọi REST API Backend (Auth, Users, Orders, Trips, Products, Drivers, Stores)
         └── components/
-            ├── Header.tsx                  # Top Bar: Chuyển trang Đơn hàng/Chuyến xe/Sản phẩm/Tài xế/Điểm xuất phát, Role, Theme, Tạo đơn mới
+            ├── LoginPage.tsx               # Màn hình đăng nhập (email/mật khẩu), kèm nút điền nhanh tài khoản demo chỉ hiển thị ở môi trường DEV
+            ├── ChangePasswordModal.tsx     # Hộp thoại cho phép người dùng đang đăng nhập tự đổi mật khẩu
+            ├── Header.tsx                  # Top Bar: Tab điều hướng lọc theo vai trò (Đơn hàng/Chuyến xe/Sản phẩm/Tài xế/Điểm xuất phát/Tài khoản), Theme, Tạo đơn mới (ADMIN), hồ sơ người dùng, Đổi mật khẩu & Đăng xuất
+            ├── UserManagementPage.tsx      # Trang Quản lý Tài khoản & Phân quyền (ADMIN): KPI, tìm kiếm, lọc vai trò/trạng thái, phân trang server, vô hiệu hóa & đặt lại mật khẩu
+            ├── UserFormModal.tsx           # Hộp thoại tạo/chỉnh sửa tài khoản người dùng & gán vai trò
+            ├── ResetPasswordModal.tsx      # Hộp thoại đặt lại mật khẩu cho người dùng (thu hồi phiên đăng nhập cũ)
             ├── OrderTable.tsx              # Trang chủ full-width: Bảng đơn hàng sắp xếp createdAt DESC (kèm tên kho xuất phát), thao tác hàng loạt theo vai trò, tìm kiếm & lọc trạng thái
             ├── OrderFormModal.tsx          # Hộp thoại Tạo/Sửa đơn hàng: Chọn depot, mini-map 5 km, hiển thị tồn kho thực tế tại depot & chặn vượt tồn kho
             ├── AssignDriverModal.tsx       # Hộp thoại Astryx Dialog gán/đổi/bỏ gán tài xế trực tiếp (chỉ lọc tài xế cùng depot với đơn hàng)
@@ -224,12 +237,27 @@ enum DriverStatus {
 model User {
   id            Int            @id @default(autoincrement())
   email         String         @unique
-  password      String
+  password      String         // Lưu dưới dạng bcrypt hash (cost 10)
   name          String
   role          Role           @default(WAREHOUSE)
+  isActive      Boolean        @default(true)
   driverProfile DriverProfile?
   trips         Trip[]
+  refreshTokens RefreshToken[]
   createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @default(now()) @updatedAt
+}
+
+model RefreshToken {
+  id        Int       @id @default(autoincrement())
+  tokenHash String    @unique // SHA-256 hash của refresh token
+  userId    Int
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
 }
 
 model DriverProfile {
@@ -347,18 +375,50 @@ model DepotStock {
 
 ### 6.1. Backend Node.js REST API (`http://localhost:3000/api`)
 
-#### Xác thực & Hệ thống
-- `GET /api/health`: Kiểm tra trạng thái hoạt động của Backend.
-- `POST /api/auth/login`: Đăng nhập (`{ email, password }`), trả về JWT token và thông tin tài khoản.
-- `GET /api/auth/me`: Lấy thông tin tài khoản hiện tại.
-- `GET /api/system/overview`: Lấy danh sách Kho (`stores`) và Người dùng (`users`).
-- `POST /api/seed`: Reset và nạp lại dữ liệu mẫu gồm:
-  - **1 Kho xuất phát (Depot):** `Lotte Mart Quận 7 (Depot)` (`10.7423, 106.7024`)
+#### Xác thực & Hệ thống (Authentication & Session)
+Toàn bộ các endpoint nghiệp vụ đều yêu cầu xác thực qua `Authorization: Bearer <accessToken>` (JWT sống ngắn `15m`) kết hợp **Refresh Token** (`7d`) lưu trong cookie `HttpOnly` (`SameSite=Lax`, path `/api/auth`), lưu hash SHA-256 trong bảng `RefreshToken` và hỗ trợ **xoay vòng token (rotation)** + phát hiện tái sử dụng (reuse detection). Mật khẩu được băm bằng `bcryptjs` (cost 10) và yêu cầu tối thiểu 6 ký tự cho tài khoản tạo mới/đổi mật khẩu.
+
+- `GET /api/health`: Kiểm tra trạng thái hoạt động của Backend (public).
+- `POST /api/auth/login`: Đăng nhập (`{ email, password }`, có giới hạn tần suất `loginRateLimiter`: 15 lần sai / 15 phút), trả về `accessToken`, thông tin `user` và set cookie `dms_refresh_token`.
+- `POST /api/auth/refresh`: Đọc cookie `dms_refresh_token`, xoay vòng refresh token trong transaction và cấp `accessToken` mới.
+- `POST /api/auth/logout`: Thu hồi refresh token hiện tại trong DB và xóa cookie.
+- `GET /api/auth/me`: Lấy thông tin tài khoản đang đăng nhập (yêu cầu `requireAuth`).
+- `POST /api/auth/change-password`: Người dùng tự đổi mật khẩu (`{ currentPassword, newPassword }`), tự động thu hồi các phiên đăng nhập cũ và cấp phiên mới cho thiết bị hiện tại.
+- `GET /api/system/overview`: Lấy danh sách Kho (`stores`) (yêu cầu `requireAuth`; chỉ trả thêm danh sách `users` khi người gọi là `ADMIN`).
+- `POST /api/seed`: Chỉ dành cho **`ADMIN`** (`requireRole(ADMIN)`). Reset và nạp lại dữ liệu mẫu gồm:
+  - **1 Kho xuất phát (Depot):** `Bến Thành` (`DEP-001`)
   - **3 Tài khoản mẫu chính + 5 Tài xế mẫu kèm hồ sơ phương tiện (`DriverProfile`):**
-    - `admin@dms.vn` (Mật khẩu: `123`, Role: `ADMIN`)
-    - `kho@dms.vn` (Mật khẩu: `123`, Role: `WAREHOUSE`)
-    - `taixe@dms.vn`, `taixe.binh@dms.vn`, `taixe.cuong@dms.vn`, `taixe.dung@dms.vn`, `taixe.hung@dms.vn` (Mật khẩu: `123`, Role: `DRIVER`)
-  - **10 Đơn hàng mẫu (`ORD-101` ➔ `ORD-110`)** có tọa độ GPS thực tế quanh khu vực Quận 7, Quận 4, Nhà Bè.
+    - `admin@dms.vn` (Mật khẩu: `123456`, Role: `ADMIN`)
+    - `kho@dms.vn` (Mật khẩu: `123456`, Role: `WAREHOUSE`)
+    - `taixe@dms.vn`, `taixe.binh@dms.vn`, `taixe.cuong@dms.vn`, `taixe.dung@dms.vn`, `taixe.hung@dms.vn` (Mật khẩu: `123456`, Role: `DRIVER`)
+    - *(Khi khởi chạy server, mọi tài khoản mẫu cũ còn lưu mật khẩu plaintext `'123'` sẽ tự động được nâng cấp và băm bcrypt thành `'123456'`.)*
+  - **10 Đơn hàng mẫu (`ORD-101` ➔ `ORD-110`)** có tọa độ GPS thực tế quanh khu vực Depot.
+
+#### Quản lý Tài khoản & Phân quyền (User Management — `ADMIN` only)
+- `GET /api/users`: Danh sách tài khoản có phân trang (`page`, `limit`), tìm kiếm (`search`), lọc theo `role` và `status` (`ACTIVE|INACTIVE`), kèm thống kê `summary`.
+- `POST /api/users`: Tạo tài khoản người dùng mới (`name`, `email`, `password` ≥ 6 ký tự, `role`, `isActive`).
+- `PUT /api/users/:id`: Cập nhật `name`, `email`, `role`, `isActive` (chặn `ADMIN` tự vô hiệu hóa hoặc tự hạ quyền; tự động thu hồi phiên đăng nhập khi vô hiệu hóa hoặc đổi vai trò, và đồng bộ `DriverProfile.isActive`).
+- `PATCH /api/users/:id/reset-password`: Đặt lại mật khẩu cho người dùng (`{ newPassword }`) và thu hồi toàn bộ refresh token cũ.
+- `DELETE /api/users/:id`: Xóa tài khoản (chặn tự xóa bản thân hoặc xóa tài khoản đã có lịch sử chuyến xe).
+
+#### Ma Trận Phân Quyền RBAC & Data Scoping
+
+| Tài nguyên / Thao tác | `ADMIN` | `WAREHOUSE` | `DRIVER` |
+| --- | --- | --- | --- |
+| **Đơn hàng**: Xem | Tất cả | Tất cả | Chỉ đơn thuộc chuyến được gán |
+| **Đơn hàng**: Tạo / Sửa / Gán tài xế | Có | Không | Không |
+| **Đơn hàng**: Nhặt hàng / Đóng gói (đơn lẻ & hàng loạt) | Có | Có | Không |
+| **Đơn hàng**: Xác nhận Giao thành công / Thất bại | Có | Không | Chỉ đơn thuộc chuyến được gán |
+| **Chuyến xe**: Xem | Tất cả | Tất cả (chỉ xem) | Chỉ chuyến được gán |
+| **Chuyến xe**: Tối ưu / Đổi tài xế / Tối ưu lại / Hủy | Có | Không | Không |
+| **Chuyến xe**: Bắt đầu xuất phát (`start`) | Có | Không | Chỉ chuyến được gán |
+| **Sản phẩm**: Xem | Có | Có (chỉ xem) | Không |
+| **Sản phẩm**: Tạo / Sửa / Xóa | Có | Không | Không |
+| **Điểm xuất phát (Depot)**: Xem | Có | Có | Thông tin cơ bản |
+| **Điểm xuất phát (Depot)**: Cập nhật tồn kho | Có | Có | Không |
+| **Điểm xuất phát (Depot)**: Tạo / Sửa / Xóa / Đặt mặc định | Có | Không | Không |
+| **Tài xế**: Xem & Quản lý | Có | Không | Không |
+| **Tài khoản người dùng** & **`/api/seed`** | Có | Không | Không |
 
 #### Quản lý Đơn hàng
 - `GET /api/orders`: Danh sách đơn hàng sắp xếp theo ngày tạo mới nhất (`createdAt DESC`, tie-breaker `id DESC`), hỗ trợ lọc `?status=NEW|PICKING|PACKED|DELIVERING|COMPLETED|FAILED`.
@@ -462,13 +522,14 @@ model DepotStock {
 
 ## 7. Đặc Tả Giao Diện Web Admin Dashboard
 
-Giao diện đơn trang (SPA) tại `http://localhost:5173` được xây dựng bằng **Meta Astryx Design System** (`@astryxdesign/core`, `@astryxdesign/theme-neutral`) kết hợp **Tailwind CSS v4** (qua Astryx Tailwind Bridge `@astryxdesign/core/tailwind-theme.css` và thứ tự `@layer` chuẩn), hỗ trợ đầy đủ **Light / System / Dark mode** và gồm 5 trang quản lý chính:
+Giao diện đơn trang (SPA) tại `http://localhost:5173` được xây dựng bằng **Meta Astryx Design System** (`@astryxdesign/core`, `@astryxdesign/theme-neutral`) kết hợp **Tailwind CSS v4** (qua Astryx Tailwind Bridge `@astryxdesign/core/tailwind-theme.css` và thứ tự `@layer` chuẩn), hỗ trợ đầy đủ **Light / System / Dark mode**, yêu cầu đăng nhập thực tế và gồm 6 trang quản lý phân quyền theo vai trò:
 
-1. **Thanh Công Cụ Trên Cùng (Top Bar — `Header.tsx`):**
-   - **Page Switcher (`SegmentedControl`):** Chuyển đổi nhanh giữa 5 trang quản lý — **Đơn hàng** (`#orders`, trang chủ), **Chuyến xe** (`#trips`), **Sản phẩm** (`#products`), **Tài xế** (`#drivers`) và **Điểm xuất phát** (`#depots`), hiển thị tổng số lượng tương ứng.
-   - **Role Switcher (`Selector`):** Chuyển đổi tức thì giữa 3 vai trò (`Quản lý / Điều phối - ADMIN`, `Nhân viên Kho - WAREHOUSE`, `Tài xế Giao hàng - DRIVER`) mà không cần đăng xuất/đăng nhập lại.
+1. **Đăng Nhập & Thanh Công Cụ Trên Cùng (`LoginPage.tsx`, `Header.tsx` & `ChangePasswordModal.tsx`):**
+   - **Màn hình Đăng nhập (`LoginPage.tsx`):** Yêu cầu email và mật khẩu để vào hệ thống; ở môi trường phát triển (`import.meta.env.DEV`), hiển thị các nút điền nhanh tài khoản demo (`Admin`, `Kho`, `Tài xế`). Khi tải lại trang, `AuthContext` tự động gọi `/api/auth/refresh` để khôi phục phiên đăng nhập liền mạch.
+   - **Page Switcher (`SegmentedControl`):** Tự động lọc các tab được phép truy cập theo vai trò — `ADMIN` thấy đầy đủ 6 trang (**Đơn hàng**, **Chuyến xe**, **Sản phẩm**, **Tài xế**, **Điểm xuất phát**, **Tài khoản**); `WAREHOUSE` thấy **Đơn hàng**, **Chuyến xe**, **Sản phẩm**, **Điểm xuất phát**; `DRIVER` chỉ thấy **Đơn hàng** và **Chuyến xe** của riêng mình.
+   - **Hồ sơ người dùng & Bảo mật:** Hiển thị tên, email, nhãn vai trò đang đăng nhập, nút **Đổi mật khẩu** (`ChangePasswordModal.tsx`) và **Đăng xuất** (thu hồi refresh token).
    - **Theme Mode Switcher (`SegmentedControl`):** Chuyển đổi chế độ giao diện **Sáng / Hệ thống / Tối** (lưu trong `localStorage`), tự động đồng bộ toàn bộ token màu Astryx và lớp bản đồ Leaflet.
-   - **Tạo đơn mới (`Button` + `Dialog`):** Mở hộp thoại thống nhất cho cả Tạo và Sửa đơn hàng (`OrderFormModal.tsx`).
+   - **Tạo đơn mới (`Button` + `Dialog`):** Chỉ hiển thị với `ADMIN`, mở hộp thoại thống nhất cho cả Tạo và Sửa đơn hàng (`OrderFormModal.tsx`).
 2. **Trang Chủ — Quản Lý Đơn Hàng (`#orders`, `OrderTable.tsx`, `OrderFormModal.tsx`, `AssignDriverModal.tsx` & `BulkAssignDriverModal.tsx`):**
    - Hiển thị **bảng đơn hàng toàn chiều rộng (full-width)**, sắp xếp mặc định theo **ngày tạo mới nhất (`createdAt DESC`)** với cột **Ngày Tạo** hiển thị rõ thời gian tạo đơn.
    - Ô tìm kiếm nhanh theo mã đơn, tên khách hàng, SĐT, địa chỉ, mã chuyến hoặc tên tài xế, kết hợp các tab lọc trạng thái (`ALL`, `NEW`, `PICKING`, `PACKED`, `DELIVERING`, `COMPLETED`, `FAILED`).
@@ -512,7 +573,11 @@ Giao diện đơn trang (SPA) tại `http://localhost:5173` được xây dựng
    - **Bản đồ tổng quan Leaflet:** Hiển thị toàn bộ các điểm xuất phát (đánh dấu nổi bật kho mặc định ⭐); click vào một điểm trên bản đồ hoặc bảng danh sách để focus và xem vòng tròn phủ sóng **5 km**.
    - **Quản lý tồn kho & Đội ngũ tại từng Depot:** Bảng danh sách hiển thị tổng tồn kho, số SKU còn hàng cùng số lượng đơn hàng, chuyến xe và **tài xế** thuộc từng depot; nút **Tồn kho** mở `DepotInventoryModal.tsx` để tìm kiếm, lọc theo trạng thái tồn (`Còn hàng`, `Sắp hết`, `Hết hàng`) và cập nhật nhanh hàng loạt số lượng tồn kho cho depot đó (`ADMIN` & `WAREHOUSE` được chỉnh sửa; `DRIVER` chỉ xem).
    - **Tìm kiếm, Lọc & Phân trang server:** Tìm theo mã kho, tên, địa chỉ, SĐT (debounce `250ms`), lọc trạng thái (`Tất cả`, `Đang hoạt động`, `Ngừng hoạt động`) và phân trang phía server (`10 / 20 / 50`).
-   - **Phân quyền & Thao tác CRUD:** Chỉ `ADMIN` được thêm, chỉnh sửa (`DepotFormModal.tsx` có bản đồ chọn tọa độ + vòng tròn 5 km), đặt mặc định, bật/tắt hoạt động và xóa (chặn xóa kho mặc định hoặc kho vẫn còn đơn hàng, chuyến xe hoặc tài xế gắn vào); `WAREHOUSE` và `DRIVER` ở chế độ chỉ xem thông tin kho.
+   - **Phân quyền & Thao tác CRUD:** Chỉ `ADMIN` được thêm, chỉnh sửa (`DepotFormModal.tsx` có bản đồ chọn tọa độ + vòng tròn 5 km), đặt mặc định, bật/tắt hoạt động và xóa (chặn xóa kho mặc định hoặc kho vẫn còn đơn hàng, chuyến xe hoặc tài xế gắn vào); `WAREHOUSE` được xem thông tin kho và chỉnh sửa tồn kho tại depot.
+7. **Trang Quản Lý Tài Khoản & Phân Quyền (`#users`, `UserManagementPage.tsx`, `UserFormModal.tsx` & `ResetPasswordModal.tsx` — `ADMIN` only):**
+   - **4 thẻ KPI tổng quan:** Tổng tài khoản, Đang hoạt động, Phân bổ vai trò (`Admin / Kho / Tài xế`), và Đã vô hiệu hóa.
+   - **Tìm kiếm, Lọc & Phân trang server:** Tìm kiếm theo họ tên/email (debounce `250ms`), lọc theo vai trò (`ADMIN`, `WAREHOUSE`, `DRIVER`) và trạng thái (`Đang hoạt động`, `Đã vô hiệu hóa`), kèm phân trang phía server (`10 / 20 / 50`).
+   - **Quản trị vòng đời tài khoản:** Tạo tài khoản mới, chỉnh sửa thông tin & vai trò, bật/tắt trạng thái hoạt động (tự động thu hồi phiên đăng nhập khi vô hiệu hóa), đặt lại mật khẩu (`ResetPasswordModal.tsx`) và xóa tài khoản chưa có lịch sử chuyến xe (chặn tự khóa/tự xóa chính mình).
 
 ---
 
@@ -546,31 +611,38 @@ docker compose stop
 ### 8.2. Các Lệnh Tự Kiểm Chứng (Self-Verification bằng cURL)
 
 ```bash
+# 0. Đăng nhập ADMIN để lấy Access Token & Refresh Cookie
+TOKEN=$(curl -s -c /tmp/dms_cookies.txt -X POST http://localhost:3000/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@dms.vn","password":"123456"}' | node -e "console.log(JSON.parse(require('fs').readFileSync(0,'utf8')).accessToken)")
+
 # 1. Kiểm tra sức khỏe Backend & Python Solver
 curl http://localhost:3000/api/health
 curl http://localhost:8090/
 
-# 2. Nạp 10 đơn hàng mẫu
-curl -X POST http://localhost:3000/api/seed
+# 2. Nạp 10 đơn hàng mẫu (yêu cầu ADMIN)
+curl -X POST http://localhost:3000/api/seed -H "Authorization: Bearer $TOKEN"
 
-# 3. Chuyển đơn số 1 sang PICKING rồi PACKED
-curl -X PATCH http://localhost:3000/api/orders/1/start-picking
-curl -X PATCH http://localhost:3000/api/orders/1/complete-packing
+# 3. Chuyển đơn số 1 sang PICKING rồi PACKED (ADMIN hoặc WAREHOUSE)
+curl -X PATCH http://localhost:3000/api/orders/1/start-picking -H "Authorization: Bearer $TOKEN"
+curl -X PATCH http://localhost:3000/api/orders/1/complete-packing -H "Authorization: Bearer $TOKEN"
 
-# 4. Gọi tối ưu hóa lộ trình với Google OR-Tools
+# 4. Gọi tối ưu hóa lộ trình với Google OR-Tools (ADMIN)
 curl -X POST http://localhost:3000/api/trips/optimize \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"storeId": 1, "orderIds": [1]}'
 
-# 5. Tài xế xác nhận giao hàng thành công
-curl -X PATCH http://localhost:3000/api/orders/1/complete-delivery
+# 5. Xác nhận giao hàng thành công (ADMIN hoặc DRIVER sở hữu chuyến)
+curl -X PATCH http://localhost:3000/api/orders/1/complete-delivery -H "Authorization: Bearer $TOKEN"
 
-# 6. Truy vấn danh sách sản phẩm có phân trang & tìm kiếm
-curl "http://localhost:3000/api/products?page=1&limit=20&search=G%E1%BA%A1o"
+# 6. Truy vấn danh sách sản phẩm có phân trang & tìm kiếm (ADMIN hoặc WAREHOUSE)
+curl -H "Authorization: Bearer $TOKEN" "http://localhost:3000/api/products?page=1&limit=20&search=G%E1%BA%A1o"
 
-# 7. Truy vấn danh sách tài xế đang sẵn sàng
-curl "http://localhost:3000/api/drivers?page=1&limit=20&status=AVAILABLE"
+# 7. Truy vấn danh sách tài xế đang sẵn sàng (ADMIN)
+curl -H "Authorization: Bearer $TOKEN" "http://localhost:3000/api/drivers?page=1&limit=20&status=AVAILABLE"
 
+# (Ghi chú: các lệnh API bên dưới cũng yêu cầu header -H "Authorization: Bearer $TOKEN")
 # 8. Gán hoặc bỏ gán tài xế trực tiếp cho đơn hàng (PACKED / DELIVERING / FAILED)
 curl -X PATCH http://localhost:3000/api/orders/1/assign-driver \
   -H "Content-Type: application/json" \

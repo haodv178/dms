@@ -37,7 +37,7 @@ import { TextInput } from '@astryxdesign/core/TextInput';
 import {
   DEFAULT_DEPOT,
   MAX_DELIVERY_DISTANCE_KM,
-  canRoleEditOrders,
+  canRoleEditDepotInventory,
   canRoleManageDepots,
   type Role,
   type Store,
@@ -152,7 +152,7 @@ export function DepotManagementPage({
   const [inventoryModalStore, setInventoryModalStore] = useState<Store | null>(null);
 
   const canManage = canRoleManageDepots(role);
-  const canManageInventory = canRoleEditOrders(role);
+  const canManageInventory = canRoleEditDepotInventory(role);
 
   const mapStores = useMemo(
     () => (allStores.length > 0 ? allStores : stores),

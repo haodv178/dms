@@ -1,6 +1,12 @@
 import { Request, Response } from 'express';
 import { DriverStatus, Prisma, Role } from '@prisma/client';
 import prisma from '../lib/prisma';
+import {
+  DEFAULT_DEMO_PASSWORD,
+  hashPassword,
+  revokeUserRefreshTokens,
+  validatePasswordStrength,
+} from '../lib/auth';
 
 const VALID_DRIVER_STATUSES = new Set<string>(Object.values(DriverStatus));
 
@@ -233,7 +239,13 @@ export const createDriver = async (req: Request, res: Response) => {
     const trimmedName = typeof name === 'string' ? name.trim() : '';
     const trimmedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
     const trimmedPassword =
-      typeof password === 'string' && password.trim() ? password.trim() : '123';
+      typeof password === 'string' && password.trim()
+        ? password.trim()
+        : DEFAULT_DEMO_PASSWORD;
+    const passwordErr = validatePasswordStrength(trimmedPassword);
+    if (passwordErr) {
+      return res.status(400).json({ success: false, message: passwordErr });
+    }
     const trimmedPhone = typeof phone === 'string' ? phone.trim() : '';
     const trimmedVehicleType =
       typeof vehicleType === 'string' && vehicleType.trim() ? vehicleType.trim() : 'Xe máy';
@@ -285,12 +297,14 @@ export const createDriver = async (req: Request, res: Response) => {
       });
     }
 
+    const hashedPassword = await hashPassword(trimmedPassword);
     const created = await prisma.user.create({
       data: {
         name: trimmedName,
         email: trimmedEmail,
-        password: trimmedPassword,
+        password: hashedPassword,
         role: Role.DRIVER,
+        isActive: parsedIsActive,
         driverProfile: {
           create: {
             storeId: targetStore.id,
@@ -444,6 +458,7 @@ export const updateDriver = async (req: Request, res: Response) => {
     const userUpdateData: Prisma.UserUpdateInput = {
       name: trimmedName,
       email: trimmedEmail,
+      isActive: nextIsActive,
       driverProfile: {
         upsert: {
           create: {
@@ -468,8 +483,13 @@ export const updateDriver = async (req: Request, res: Response) => {
       },
     };
 
-    if (typeof password === 'string' && password.trim()) {
-      userUpdateData.password = password.trim();
+    const passwordChanged = typeof password === 'string' && password.trim().length > 0;
+    if (passwordChanged) {
+      const passwordErr = validatePasswordStrength(password.trim());
+      if (passwordErr) {
+        return res.status(400).json({ success: false, message: passwordErr });
+      }
+      userUpdateData.password = await hashPassword(password.trim());
     }
 
     const updated = await prisma.user.update({
@@ -477,6 +497,10 @@ export const updateDriver = async (req: Request, res: Response) => {
       data: userUpdateData,
       include: DRIVER_INCLUDE,
     });
+
+    if (!nextIsActive || passwordChanged) {
+      await revokeUserRefreshTokens(id);
+    }
 
     res.json({
       success: true,

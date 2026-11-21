@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { Role } from '@prisma/client';
 import {
   createStore,
   deleteStore,
@@ -9,16 +10,19 @@ import {
   updateStore,
   updateStoreInventory,
 } from '../controllers/store.controller';
+import { requireAuth, requireRole } from '../middleware/auth.middleware';
 
 const router = Router();
 
-router.get('/', getStores);
-router.get('/:id/inventory', getStoreInventory);
-router.put('/:id/inventory', updateStoreInventory);
-router.get('/:id', getStoreById);
-router.post('/', createStore);
-router.put('/:id', updateStore);
-router.patch('/:id/set-default', setDefaultStore);
-router.delete('/:id', deleteStore);
+router.use(requireAuth);
+
+router.get('/', requireRole(Role.ADMIN, Role.WAREHOUSE, Role.DRIVER), getStores);
+router.get('/:id/inventory', requireRole(Role.ADMIN, Role.WAREHOUSE), getStoreInventory);
+router.put('/:id/inventory', requireRole(Role.ADMIN, Role.WAREHOUSE), updateStoreInventory);
+router.get('/:id', requireRole(Role.ADMIN, Role.WAREHOUSE, Role.DRIVER), getStoreById);
+router.post('/', requireRole(Role.ADMIN), createStore);
+router.put('/:id', requireRole(Role.ADMIN), updateStore);
+router.patch('/:id/set-default', requireRole(Role.ADMIN), setDefaultStore);
+router.delete('/:id', requireRole(Role.ADMIN), deleteStore);
 
 export default router;

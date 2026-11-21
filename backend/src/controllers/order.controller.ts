@@ -159,8 +159,13 @@ async function resolveAndValidateItems(
 export const getOrders = async (req: Request, res: Response) => {
   try {
     const { status } = req.query;
-    const whereClause =
-      status && status !== 'ALL' ? { status: status as OrderStatus } : {};
+    const whereClause: Prisma.OrderWhereInput = {};
+    if (status && status !== 'ALL') {
+      whereClause.status = status as OrderStatus;
+    }
+    if (req.user?.role === Role.DRIVER) {
+      whereClause.trip = { is: { driverId: req.user.id } };
+    }
 
     const orders = await prisma.order.findMany({
       where: whereClause,
@@ -182,6 +187,12 @@ export const getOrderById = async (req: Request, res: Response) => {
     });
     if (!order) {
       return res.status(404).json({ success: false, message: 'Order not found' });
+    }
+    if (req.user?.role === Role.DRIVER && order.trip?.driverId !== req.user.id) {
+      return res.status(403).json({
+        success: false,
+        message: 'Bạn chỉ có quyền xem các đơn hàng thuộc chuyến giao của mình.',
+      });
     }
     res.json({ success: true, data: order });
   } catch (error: any) {
@@ -533,9 +544,27 @@ async function checkAndCompleteTrip(
 
 export const completeDelivery = async (req: Request, res: Response) => {
   try {
-    const { id } = req.params;
+    const orderId = Number(req.params.id);
+    if (!Number.isInteger(orderId) || orderId <= 0) {
+      return res.status(400).json({ success: false, message: 'ID đơn hàng không hợp lệ.' });
+    }
+
+    const existing = await prisma.order.findUnique({
+      where: { id: orderId },
+      include: { trip: true },
+    });
+    if (!existing) {
+      return res.status(404).json({ success: false, message: 'Không tìm thấy đơn hàng.' });
+    }
+    if (req.user?.role === Role.DRIVER && existing.trip?.driverId !== req.user.id) {
+      return res.status(403).json({
+        success: false,
+        message: 'Bạn chỉ có thể xác nhận giao hàng cho đơn thuộc chuyến của mình.',
+      });
+    }
+
     const updatedOrder = await prisma.order.update({
-      where: { id: Number(id) },
+      where: { id: orderId },
       data: { status: OrderStatus.COMPLETED },
       include: { items: true, store: true, trip: true },
     });
@@ -553,6 +582,20 @@ export const failDelivery = async (req: Request, res: Response) => {
     const orderId = Number(req.params.id);
     if (!Number.isInteger(orderId) || orderId <= 0) {
       return res.status(400).json({ success: false, message: 'ID đơn hàng không hợp lệ.' });
+    }
+
+    const existingOrderCheck = await prisma.order.findUnique({
+      where: { id: orderId },
+      include: { trip: true },
+    });
+    if (!existingOrderCheck) {
+      return res.status(404).json({ success: false, message: 'Không tìm thấy đơn hàng.' });
+    }
+    if (req.user?.role === Role.DRIVER && existingOrderCheck.trip?.driverId !== req.user.id) {
+      return res.status(403).json({
+        success: false,
+        message: 'Bạn chỉ có thể báo giao thất bại cho đơn thuộc chuyến của mình.',
+      });
     }
 
     const updatedOrder = await prisma.$transaction(async (tx) => {
@@ -939,6 +982,17 @@ export const bulkOrderAction = async (req: Request, res: Response) => {
         store: { id: number; name: string };
       } | null;
     } | null = null;
+
+    if (
+      req.user?.role === Role.WAREHOUSE &&
+      action !== 'START_PICKING' &&
+      action !== 'COMPLETE_PACKING'
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: 'Nhân viên kho chỉ được phép thực hiện soạn hàng hoặc đóng gói hàng loạt.',
+      });
+    }
 
     if (action === 'ASSIGN_DRIVER') {
       const parsedDriverId = Number(rawDriverId);

@@ -1,4 +1,5 @@
 import { PrismaClient, Role, OrderStatus, DriverStatus } from '@prisma/client';
+import { DEFAULT_DEMO_PASSWORD, hashPassword } from './auth';
 
 const SAMPLE_DRIVERS = [
   {
@@ -66,6 +67,7 @@ export async function seedDrivers(prisma: PrismaClient, storeId?: number) {
     targetStoreId = defaultStore.id;
   }
 
+  const defaultHashedPassword = await hashPassword(DEFAULT_DEMO_PASSWORD);
   const drivers = [];
   for (const drv of SAMPLE_DRIVERS) {
     const user = await prisma.user.upsert({
@@ -76,7 +78,7 @@ export async function seedDrivers(prisma: PrismaClient, storeId?: number) {
       },
       create: {
         email: drv.email,
-        password: '123',
+        password: defaultHashedPassword,
         name: drv.name,
         role: Role.DRIVER,
       },
@@ -192,21 +194,37 @@ export async function runSeed(prisma: PrismaClient, resetOrders = true) {
     },
   });
 
-  // 2. Tạo 3 Users tương ứng 3 Roles
+  // 2. Tạo 3 Users tương ứng 3 Roles (mật khẩu đã hash bcrypt)
+  const defaultHashedPassword = await hashPassword(DEFAULT_DEMO_PASSWORD);
   const admin = await prisma.user.upsert({
     where: { email: 'admin@dms.vn' },
     update: { name: 'Quản lý Điều phối', role: Role.ADMIN },
-    create: { email: 'admin@dms.vn', password: '123', name: 'Quản lý Điều phối', role: Role.ADMIN },
+    create: {
+      email: 'admin@dms.vn',
+      password: defaultHashedPassword,
+      name: 'Quản lý Điều phối',
+      role: Role.ADMIN,
+    },
   });
   const warehouse = await prisma.user.upsert({
     where: { email: 'kho@dms.vn' },
     update: { name: 'Nhân viên Kho', role: Role.WAREHOUSE },
-    create: { email: 'kho@dms.vn', password: '123', name: 'Nhân viên Kho', role: Role.WAREHOUSE },
+    create: {
+      email: 'kho@dms.vn',
+      password: defaultHashedPassword,
+      name: 'Nhân viên Kho',
+      role: Role.WAREHOUSE,
+    },
   });
   const driver = await prisma.user.upsert({
     where: { email: 'taixe@dms.vn' },
     update: { name: 'Tài xế Nguyễn Văn A', role: Role.DRIVER },
-    create: { email: 'taixe@dms.vn', password: '123', name: 'Tài xế Nguyễn Văn A', role: Role.DRIVER },
+    create: {
+      email: 'taixe@dms.vn',
+      password: defaultHashedPassword,
+      name: 'Tài xế Nguyễn Văn A',
+      role: Role.DRIVER,
+    },
   });
 
   if (resetOrders) {

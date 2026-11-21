@@ -1,35 +1,38 @@
 import {
   ArrowRight,
   ClipboardList,
+  KeyRound,
+  LogOut,
   Monitor,
   Moon,
   Package,
   Plus,
   Route,
+  ShieldCheck,
   Sun,
   Truck,
-  UserCheck,
   Users,
   Warehouse,
 } from 'lucide-react';
 import { Badge } from '@astryxdesign/core/Badge';
 import { Button } from '@astryxdesign/core/Button';
 import { Heading } from '@astryxdesign/core/Heading';
+import { IconButton } from '@astryxdesign/core/IconButton';
 import { SegmentedControl, SegmentedControlItem } from '@astryxdesign/core/SegmentedControl';
-import { Selector } from '@astryxdesign/core/Selector';
 import { Text } from '@astryxdesign/core/Text';
 import {
   ROLE_META,
+  canRoleAccessPage,
+  canRoleEditOrders,
   type ActivePage,
-  type Role,
+  type AuthUser,
   type ThemeMode,
 } from '../types/dms';
 
 interface HeaderProps {
+  user: AuthUser;
   activePage: ActivePage;
   onActivePageChange: (page: ActivePage) => void;
-  role: Role;
-  onRoleChange: (role: Role) => void;
   themeMode: ThemeMode;
   onThemeModeChange: (mode: ThemeMode) => void;
   counts: Record<string, number>;
@@ -37,20 +40,16 @@ interface HeaderProps {
   productsCount: number;
   driversCount: number;
   storesCount: number;
+  usersCount: number;
   onOpenNewOrder: () => void;
+  onOpenChangePassword: () => void;
+  onLogout: () => void;
 }
 
-const ROLE_OPTIONS = [
-  { value: 'ADMIN', label: 'Quản lý / Điều phối (ADMIN)' },
-  { value: 'WAREHOUSE', label: 'Nhân viên Kho (WAREHOUSE)' },
-  { value: 'DRIVER', label: 'Tài xế Giao hàng (DRIVER)' },
-];
-
 export function Header({
+  user,
   activePage,
   onActivePageChange,
-  role,
-  onRoleChange,
   themeMode,
   onThemeModeChange,
   counts,
@@ -58,9 +57,13 @@ export function Header({
   productsCount,
   driversCount,
   storesCount,
+  usersCount,
   onOpenNewOrder,
+  onOpenChangePassword,
+  onLogout,
 }: HeaderProps) {
-  const activeRole = ROLE_META[role];
+  const activeRole = ROLE_META[user.role];
+  const canCreateOrder = canRoleEditOrders(user.role);
 
   return (
     <header className="sticky top-0 z-30 bg-surface border-b border-border shadow-xs">
@@ -99,34 +102,35 @@ export function Header({
               label={`Chuyến xe (${tripsCount})`}
               icon={<Route className="w-3.5 h-3.5" />}
             />
-            <SegmentedControlItem
-              value="products"
-              label={`Sản phẩm (${productsCount})`}
-              icon={<Package className="w-3.5 h-3.5" />}
-            />
-            <SegmentedControlItem
-              value="drivers"
-              label={`Tài xế (${driversCount})`}
-              icon={<Users className="w-3.5 h-3.5" />}
-            />
-            <SegmentedControlItem
-              value="depots"
-              label={`Điểm xuất phát (${storesCount})`}
-              icon={<Warehouse className="w-3.5 h-3.5" />}
-            />
+            {canRoleAccessPage(user.role, 'products') && (
+              <SegmentedControlItem
+                value="products"
+                label={`Sản phẩm (${productsCount})`}
+                icon={<Package className="w-3.5 h-3.5" />}
+              />
+            )}
+            {canRoleAccessPage(user.role, 'drivers') && (
+              <SegmentedControlItem
+                value="drivers"
+                label={`Tài xế (${driversCount})`}
+                icon={<Users className="w-3.5 h-3.5" />}
+              />
+            )}
+            {canRoleAccessPage(user.role, 'depots') && (
+              <SegmentedControlItem
+                value="depots"
+                label={`Điểm xuất phát (${storesCount})`}
+                icon={<Warehouse className="w-3.5 h-3.5" />}
+              />
+            )}
+            {canRoleAccessPage(user.role, 'users') && (
+              <SegmentedControlItem
+                value="users"
+                label={`Tài khoản (${usersCount})`}
+                icon={<ShieldCheck className="w-3.5 h-3.5" />}
+              />
+            )}
           </SegmentedControl>
-
-          <Selector
-            label="Vai trò (Switch Role)"
-            isLabelHidden
-            variant="secondary"
-            size="sm"
-            width={240}
-            startIcon={<UserCheck className="w-4 h-4" />}
-            options={ROLE_OPTIONS}
-            value={role}
-            onChange={(val) => onRoleChange(val as Role)}
-          />
 
           <SegmentedControl
             label="Giao diện sáng hoặc tối"
@@ -151,13 +155,42 @@ export function Header({
             />
           </SegmentedControl>
 
-          <Button
-            label="Tạo đơn mới"
-            variant="primary"
-            size="sm"
-            icon={<Plus className="w-4 h-4" />}
-            onClick={onOpenNewOrder}
-          />
+          {canCreateOrder && (
+            <Button
+              label="Tạo đơn mới"
+              variant="primary"
+              size="sm"
+              icon={<Plus className="w-4 h-4" />}
+              onClick={onOpenNewOrder}
+            />
+          )}
+
+          <div className="flex items-center gap-1.5 pl-2 border-l border-border">
+            <div className="hidden sm:flex flex-col items-end leading-tight mr-1">
+              <Text type="label" size="xsm">
+                {user.name}
+              </Text>
+              <Text type="supporting" size="xsm">
+                {user.email}
+              </Text>
+            </div>
+            <IconButton
+              label="Đổi mật khẩu"
+              tooltip="Đổi mật khẩu"
+              variant="secondary"
+              size="sm"
+              icon={<KeyRound className="w-3.5 h-3.5" />}
+              onClick={onOpenChangePassword}
+            />
+            <IconButton
+              label="Đăng xuất"
+              tooltip="Đăng xuất"
+              variant="secondary"
+              size="sm"
+              icon={<LogOut className="w-3.5 h-3.5" />}
+              onClick={onLogout}
+            />
+          </div>
         </div>
       </div>
 
@@ -167,9 +200,9 @@ export function Header({
           <div className="flex items-center gap-2 flex-wrap">
             <Badge label={activeRole.shortLabel} variant={activeRole.badgeVariant} />
             <Text type="supporting" size="xsm">
-              Tài khoản đang chọn:{' '}
+              Đăng nhập:{' '}
               <Text type="label" size="xsm" color="primary">
-                {activeRole.email}
+                {user.name} ({user.email})
               </Text>{' '}
               — {activeRole.desc}
             </Text>
