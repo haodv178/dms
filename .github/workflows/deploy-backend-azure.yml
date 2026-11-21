@@ -1,0 +1,155 @@
+name: Deploy DMS Backend to Azure
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'backend/**'
+      - 'python-solver/**'
+      - 'infra/**'
+      - '.github/workflows/deploy-backend-azure.yml'
+  workflow_dispatch:
+    inputs:
+      location:
+        description: 'Azure region override (defaults to AZURE_LOCATION var or southeastasia)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+env:
+  AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP || 'rg-dms-backend' }}
+  AZURE_LOCATION: ${{ inputs.location || vars.AZURE_LOCATION || 'southeastasia' }}
+  FRONTEND_ORIGIN: ${{ vars.FRONTEND_ORIGIN || 'http://localhost:5173' }}
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    outputs:
+      backend_image: ${{ steps.meta.outputs.backend_image }}
+      solver_image: ${{ steps.meta.outputs.solver_image }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set image names
+        id: meta
+        run: |
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          TAG="${{ github.sha }}"
+          echo "owner=${OWNER}" >> "$GITHUB_OUTPUT"
+          echo "backend_repo=ghcr.io/${OWNER}/dms-backend" >> "$GITHUB_OUTPUT"
+          echo "solver_repo=ghcr.io/${OWNER}/dms-python-solver" >> "$GITHUB_OUTPUT"
+          echo "backend_image=ghcr.io/${OWNER}/dms-backend:${TAG}" >> "$GITHUB_OUTPUT"
+          echo "solver_image=ghcr.io/${OWNER}/dms-python-solver:${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.backend_image }}
+            ${{ steps.meta.outputs.backend_repo }}:latest
+          cache-from: type=gha,scope=dms-backend
+          cache-to: type=gha,mode=max,scope=dms-backend
+
+      - name: Build and push python-solver image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./python-solver
+          file: ./python-solver/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.solver_image }}
+            ${{ steps.meta.outputs.solver_repo }}:latest
+          cache-from: type=gha,scope=dms-solver
+          cache-to: type=gha,mode=max,scope=dms-solver
+
+  deploy-azure:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Ensure Resource Group exists
+        run: |
+          az group create \
+            --name "${AZURE_RESOURCE_GROUP}" \
+            --location "${AZURE_LOCATION}"
+
+      - name: Deploy Bicep infrastructure & Container Apps
+        id: deploy
+        env:
+          POSTGRES_ADMIN_PASSWORD: ${{ secrets.POSTGRES_ADMIN_PASSWORD }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+        run: |
+          OUTPUTS=$(az deployment group create \
+            --resource-group "${AZURE_RESOURCE_GROUP}" \
+            --template-file infra/main.bicep \
+            --parameters \
+              location="${AZURE_LOCATION}" \
+              backendImage="${{ needs.build-and-push.outputs.backend_image }}" \
+              solverImage="${{ needs.build-and-push.outputs.solver_image }}" \
+              postgresAdminPassword="${POSTGRES_ADMIN_PASSWORD}" \
+              jwtSecret="${JWT_SECRET}" \
+              frontendOrigin="${FRONTEND_ORIGIN}" \
+            --query properties.outputs \
+            --output json)
+
+          BACKEND_URL=$(echo "$OUTPUTS" | jq -r '.backendUrl.value')
+          POSTGRES_HOST=$(echo "$OUTPUTS" | jq -r '.postgresHost.value')
+          echo "backend_url=${BACKEND_URL}" >> "$GITHUB_OUTPUT"
+          echo "postgres_host=${POSTGRES_HOST}" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke test backend health endpoint
+        run: |
+          BACKEND_URL="${{ steps.deploy.outputs.backend_url }}"
+          echo "Checking ${BACKEND_URL}/api/health ..."
+          for i in $(seq 1 12); do
+            if curl -fsS "${BACKEND_URL}/api/health"; then
+              echo ""
+              echo "Backend is healthy!"
+              exit 0
+            fi
+            echo "Attempt $i failed (container may still be cold-starting/seeding); retrying in 10s..."
+            sleep 10
+          done
+          echo "Health check did not pass within timeout."
+          exit 1
+
+      - name: Write deployment summary
+        run: |
+          {
+            echo "### Azure Backend Deployment Summary"
+            echo "- **Backend URL**: ${{ steps.deploy.outputs.backend_url }}"
+            echo "- **Health Check**: ${{ steps.deploy.outputs.backend_url }}/api/health"
+            echo "- **PostgreSQL Host**: \`${{ steps.deploy.outputs.postgres_host }}\`"
+            echo "- **Backend Image**: \`${{ needs.build-and-push.outputs.backend_image }}\`"
+            echo "- **Solver Image**: \`${{ needs.build-and-push.outputs.solver_image }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

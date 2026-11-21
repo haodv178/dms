@@ -71,10 +71,18 @@ export function hashRefreshToken(rawToken: string): string {
 
 export function getRefreshCookieOptions(): CookieOptions {
   const isProd = process.env.NODE_ENV === 'production';
+  const sameSiteEnv = process.env.COOKIE_SAME_SITE?.toLowerCase();
+  const sameSite: CookieOptions['sameSite'] =
+    sameSiteEnv === 'lax' || sameSiteEnv === 'strict' || sameSiteEnv === 'none'
+      ? sameSiteEnv
+      : isProd
+        ? 'none'
+        : 'lax';
+
   return {
     httpOnly: true,
-    secure: isProd,
-    sameSite: 'lax',
+    secure: isProd || sameSite === 'none',
+    sameSite,
     path: '/api/auth',
     maxAge: REFRESH_TOKEN_DAYS * 24 * 60 * 60 * 1000,
   };

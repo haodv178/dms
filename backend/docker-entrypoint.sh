@@ -8,7 +8,7 @@ echo "Migrating legacy DriverProfile.storeId to default Depot (if needed)..."
 npx prisma db execute --file prisma/migrate-driver-depots.sql --schema=prisma/schema.prisma || true
 
 echo "Syncing Prisma schema with PostgreSQL..."
-npx prisma db push --schema=prisma/schema.prisma --skip-generate --accept-data-loss
+npx prisma db push --schema=prisma/schema.prisma --skip-generate
 
 echo "Starting DMS Backend..."
 exec node dist/index.js
