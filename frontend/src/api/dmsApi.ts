@@ -52,11 +52,6 @@ export async function fetchDashboardData(): Promise<DashboardData> {
   };
 }
 
-export async function seedSampleOrders(): Promise<string> {
-  const res = await axios.post(`${API_BASE}/seed`);
-  return res.data?.message || 'Đã nạp 10 đơn hàng mẫu thành công!';
-}
-
 export async function startPickingOrder(orderId: number): Promise<void> {
   await axios.patch(`${API_BASE}/orders/${orderId}/start-picking`);
 }

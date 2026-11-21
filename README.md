@@ -91,6 +91,7 @@ doan/
 │   │   ├── migrate-depot-stocks.sql # Migration idempotent chuyển Product.stock cũ sang bảng DepotStock (Depot mặc định)
 │   │   ├── migrate-driver-depots.sql # Migration idempotent gán DriverProfile.storeId cũ sang Depot mặc định
 │   │   ├── seed.ts              # Script nạp dữ liệu mẫu qua CLI
+│   │   ├── seed-orders.ts       # Script sinh đơn hàng mẫu qua CLI (nhận số lượng đơn, mặc định 20)
 │   │   └── seed-1000-products.ts # Script sinh 1.000 sản phẩm mẫu kèm tồn kho theo từng depot
 │   └── src/
 │       ├── index.ts             # Entrypoint Express, tự động seed & đảm bảo điểm xuất phát mặc định
@@ -134,7 +135,7 @@ doan/
         ├── api/
         │   └── dmsApi.ts        # Axios client gọi REST API Backend (Orders, Trips, Products, Drivers, Stores)
         └── components/
-            ├── Header.tsx                  # Top Bar: Chuyển trang Đơn hàng/Chuyến xe/Sản phẩm/Tài xế/Điểm xuất phát, Role, Theme, Seed/New
+            ├── Header.tsx                  # Top Bar: Chuyển trang Đơn hàng/Chuyến xe/Sản phẩm/Tài xế/Điểm xuất phát, Role, Theme, Tạo đơn mới
             ├── OrderTable.tsx              # Trang chủ full-width: Bảng đơn hàng sắp xếp createdAt DESC (kèm tên kho xuất phát), thao tác hàng loạt theo vai trò, tìm kiếm & lọc trạng thái
             ├── OrderFormModal.tsx          # Hộp thoại Tạo/Sửa đơn hàng: Chọn depot, mini-map 5 km, hiển thị tồn kho thực tế tại depot & chặn vượt tồn kho
             ├── AssignDriverModal.tsx       # Hộp thoại Astryx Dialog gán/đổi/bỏ gán tài xế trực tiếp (chỉ lọc tài xế cùng depot với đơn hàng)
@@ -176,7 +177,7 @@ stateDiagram-v2
 
 | Mã Trạng Thái | Tên Trạng Thái | Vai Trò Thực Hiện | Hành Động Kích Hoạt |
 | :--- | :--- | :--- | :--- |
-| **`NEW`** | Mới tạo | Khách / Admin | Tạo đơn qua form hoặc bấm nút `"Seed 10 Sample Orders"` |
+| **`NEW`** | Mới tạo | Khách / Admin | Tạo đơn qua form hoặc chạy lệnh CLI `npm --prefix backend run seed:orders` |
 | **`PICKING`** | Đang nhặt hàng | Nhân viên Kho (`WAREHOUSE`) | Nhân viên kho nhận đơn và đi lấy hàng trong kho/siêu thị |
 | **`PACKED`** | Đã đóng gói | Nhân viên Kho (`WAREHOUSE`) | Kiểm tra hàng, đóng vào túi/thùng, sẵn sàng chờ điều phối giao |
 | **`DELIVERING`**| Đang giao hàng | Điều phối viên (`ADMIN`) / Kho (`WAREHOUSE`) | Chạy Google OR-Tools cho nhiều đơn `PACKED` hoặc gán/đổi tài xế trực tiếp cho từng đơn (`PACKED` / `DELIVERING` / `FAILED`); có thể bỏ gán để đưa đơn về `PACKED` |
@@ -468,7 +469,6 @@ Giao diện đơn trang (SPA) tại `http://localhost:5173` được xây dựng
    - **Role Switcher (`Selector`):** Chuyển đổi tức thì giữa 3 vai trò (`Quản lý / Điều phối - ADMIN`, `Nhân viên Kho - WAREHOUSE`, `Tài xế Giao hàng - DRIVER`) mà không cần đăng xuất/đăng nhập lại.
    - **Theme Mode Switcher (`SegmentedControl`):** Chuyển đổi chế độ giao diện **Sáng / Hệ thống / Tối** (lưu trong `localStorage`), tự động đồng bộ toàn bộ token màu Astryx và lớp bản đồ Leaflet.
    - **Tạo đơn mới (`Button` + `Dialog`):** Mở hộp thoại thống nhất cho cả Tạo và Sửa đơn hàng (`OrderFormModal.tsx`).
-   - **Seed 10 Sample Orders (`Button`):** Khôi phục/nạp nhanh 10 đơn hàng mẫu ở trạng thái `NEW` để bắt đầu buổi thuyết trình.
 2. **Trang Chủ — Quản Lý Đơn Hàng (`#orders`, `OrderTable.tsx`, `OrderFormModal.tsx`, `AssignDriverModal.tsx` & `BulkAssignDriverModal.tsx`):**
    - Hiển thị **bảng đơn hàng toàn chiều rộng (full-width)**, sắp xếp mặc định theo **ngày tạo mới nhất (`createdAt DESC`)** với cột **Ngày Tạo** hiển thị rõ thời gian tạo đơn.
    - Ô tìm kiếm nhanh theo mã đơn, tên khách hàng, SĐT, địa chỉ, mã chuyến hoặc tên tài xế, kết hợp các tab lọc trạng thái (`ALL`, `NEW`, `PICKING`, `PACKED`, `DELIVERING`, `COMPLETED`, `FAILED`).
@@ -618,6 +618,17 @@ curl -X PUT http://localhost:3000/api/stores/1/inventory \
   -d '{"items": [{"productId": 1, "quantity": 120}]}'
 ```
 
+#### Nạp nhanh đơn hàng mẫu qua CLI (mặc định 20 đơn, tọa độ hợp lệ trong bán kính 5 km quanh các kho đang hoạt động):
+```bash
+# Sinh 20 đơn hàng mẫu (mặc định)
+npm --prefix backend run seed:orders
+
+# Sinh số lượng đơn hàng tùy chọn (VD: 50 đơn)
+npm --prefix backend run seed:orders -- 50
+# hoặc
+npm --prefix backend run seed:orders -- --count 50
+```
+
 #### Nạp nhanh 1.000 sản phẩm mẫu để kiểm thử phân trang:
 ```bash
 npm --prefix backend run db:push
@@ -657,7 +668,7 @@ Thực hiện tuần tự 4 bước sau trên giao diện **`http://localhost:51
 
 1. **Bước 1 — Khởi tạo dữ liệu (Trang Chủ `#orders`):**
    - Mở Dashboard: Trang chủ hiển thị danh sách đơn hàng toàn chiều rộng, sắp xếp mặc định theo **ngày tạo mới nhất (`createdAt DESC`)**.
-   - Bấm nút **"Seed 10 Sample Orders"** trên góc phải ➔ 10 đơn hàng xuất hiện ở trạng thái `NEW` kèm cột **Ngày Tạo**.
+   - Chạy lệnh `npm --prefix backend run seed:orders` (mặc định 20 đơn, hoặc truyền số lượng tùy chọn như `npm --prefix backend run seed:orders -- 50`) hoặc bấm **"Tạo đơn mới"** trên góc phải ➔ các đơn hàng mới xuất hiện ở trạng thái `NEW` kèm cột **Ngày Tạo**.
 
 2. **Bước 2 — Nghiệp vụ Kho (Warehouse Fulfillment):**
    - Chọn vai trò **"Nhân viên Kho (WAREHOUSE)"** trên thanh công cụ.

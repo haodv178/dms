@@ -25,7 +25,6 @@ import {
   optimizeTripRoute,
   reassignTripDriver,
   reoptimizeTrip,
-  seedSampleOrders,
   setDefaultStore,
   startPickingOrder,
   startTrip,
@@ -447,19 +446,6 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
   useEffect(() => {
     void loadStoresPage(storePage, storePageSize, debouncedStoreSearch, storeStatusFilter);
   }, [loadStoresPage, storePage, storePageSize, debouncedStoreSearch, storeStatusFilter]);
-
-  const handleSeedOrders = async () => {
-    setLoading(true);
-    try {
-      const message = await seedSampleOrders();
-      notify(message, 'info');
-      await Promise.all([loadAllData(), loadDriversPage()]);
-    } catch (err) {
-      notify(`Lỗi nạp dữ liệu mẫu: ${getErrorMessage(err)}`, 'error');
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const handleStartPicking = async (orderId: number) => {
     try {
@@ -1191,9 +1177,7 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
         productsCount={productSummary.totalProducts}
         driversCount={driverSummary.totalDrivers}
         storesCount={storeSummary.totalStores}
-        loading={loading}
         onOpenNewOrder={handleOpenCreateOrder}
-        onSeedOrders={handleSeedOrders}
       />
 
       {activePage === 'orders' ? (

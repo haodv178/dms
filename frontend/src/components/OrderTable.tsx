@@ -440,7 +440,7 @@ export function OrderTable({
                 <Text type="supporting" size="sm">
                   {searchQuery.trim()
                     ? 'Không tìm thấy đơn hàng nào khớp với từ khóa tìm kiếm.'
-                    : 'Không có đơn hàng nào trong trạng thái này. Hãy tạo đơn mới hoặc bấm "Seed 10 Sample Orders" trên thanh công cụ.'}
+                    : 'Không có đơn hàng nào trong trạng thái này. Hãy tạo đơn mới để bắt đầu.'}
                 </Text>
               </div>
             ) : (

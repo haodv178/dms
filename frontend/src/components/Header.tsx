@@ -5,7 +5,6 @@ import {
   Moon,
   Package,
   Plus,
-  RefreshCw,
   Route,
   Sun,
   Truck,
@@ -38,9 +37,7 @@ interface HeaderProps {
   productsCount: number;
   driversCount: number;
   storesCount: number;
-  loading: boolean;
   onOpenNewOrder: () => void;
-  onSeedOrders: () => void;
 }
 
 const ROLE_OPTIONS = [
@@ -61,9 +58,7 @@ export function Header({
   productsCount,
   driversCount,
   storesCount,
-  loading,
   onOpenNewOrder,
-  onSeedOrders,
 }: HeaderProps) {
   const activeRole = ROLE_META[role];
 
@@ -158,19 +153,10 @@ export function Header({
 
           <Button
             label="Tạo đơn mới"
-            variant="secondary"
+            variant="primary"
             size="sm"
             icon={<Plus className="w-4 h-4" />}
             onClick={onOpenNewOrder}
-          />
-
-          <Button
-            label="Seed 10 Sample Orders"
-            variant="primary"
-            size="sm"
-            icon={<RefreshCw className="w-3.5 h-3.5" />}
-            isLoading={loading}
-            onClick={onSeedOrders}
           />
         </div>
       </div>
