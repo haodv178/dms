@@ -548,6 +548,14 @@ export function OrderTable({
                                 {order.customerAddress}
                               </Text>
                             </div>
+                            {order.store?.name && (
+                              <div className="flex items-center gap-1 mt-0.5">
+                                <Badge
+                                  label={`Kho: ${order.store.name}`}
+                                  variant="neutral"
+                                />
+                              </div>
+                            )}
                             {order.items && order.items.length > 0 && (
                               <div className="flex items-center gap-1 text-secondary mt-0.5">
                                 <ShoppingBag className="w-3 h-3 shrink-0" />

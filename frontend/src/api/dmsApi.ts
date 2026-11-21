@@ -11,11 +11,15 @@ import {
   type OrderFormState,
   type PaginatedDriversResponse,
   type PaginatedProductsResponse,
+  type PaginatedStoresResponse,
   type Product,
   type ProductFormState,
   type ProductPagination,
   type ProductSummary,
   type Store,
+  type StoreFormState,
+  type StorePagination,
+  type StoreSummary,
   type Trip,
 } from '../types/dms';
 
@@ -25,6 +29,7 @@ export interface DashboardData {
   orders: Order[];
   trips: Trip[];
   depot: Store | null;
+  stores: Store[];
 }
 
 export async function fetchDashboardData(): Promise<DashboardData> {
@@ -34,10 +39,14 @@ export async function fetchDashboardData(): Promise<DashboardData> {
     axios.get(`${API_BASE}/trips`),
   ]);
 
+  const stores = (overviewRes.data?.data?.stores as Store[]) || [];
+  const defaultStore = stores.find((s) => s.isDefault) ?? stores[0] ?? null;
+
   return {
     orders: (ordersRes.data?.data as Order[]) || [],
     trips: (tripsRes.data?.data as Trip[]) || [],
-    depot: (overviewRes.data?.data?.stores?.[0] as Store | undefined) ?? null,
+    depot: defaultStore,
+    stores,
   };
 }
 
@@ -146,7 +155,7 @@ export async function cancelOrDeleteTrip(
   };
 }
 
-function serializeOrderPayload(form: OrderFormState) {
+function serializeOrderPayload(form: OrderFormState, fallbackStoreId?: number) {
   const items = form.items.map((item) => ({
     productId: item.productId ?? undefined,
     sku: item.sku && item.sku !== '—' ? item.sku.trim() : undefined,
@@ -154,7 +163,11 @@ function serializeOrderPayload(form: OrderFormState) {
     quantity: Number(item.quantity),
     price: Number(item.price),
   }));
+  const parsedStoreId = Number(form.storeId);
+  const storeId =
+    Number.isInteger(parsedStoreId) && parsedStoreId > 0 ? parsedStoreId : fallbackStoreId;
   return {
+    ...(storeId ? { storeId } : {}),
     customerName: form.customerName.trim(),
     customerPhone: form.customerPhone.trim(),
     customerAddress: form.customerAddress.trim(),
@@ -166,10 +179,7 @@ function serializeOrderPayload(form: OrderFormState) {
 }
 
 export async function createOrder(storeId: number, form: OrderFormState): Promise<Order> {
-  const res = await axios.post(`${API_BASE}/orders`, {
-    storeId,
-    ...serializeOrderPayload(form),
-  });
+  const res = await axios.post(`${API_BASE}/orders`, serializeOrderPayload(form, storeId));
   return res.data.data as Order;
 }
 
@@ -317,6 +327,82 @@ export async function updateDriver(driverId: number, form: DriverFormState): Pro
 
 export async function deleteDriver(driverId: number): Promise<void> {
   await axios.delete(`${API_BASE}/drivers/${driverId}`);
+}
+
+export interface FetchStoresParams {
+  page?: number;
+  limit?: number;
+  search?: string;
+  status?: string;
+  activeOnly?: boolean;
+}
+
+export async function fetchStores(
+  params: FetchStoresParams = {}
+): Promise<PaginatedStoresResponse> {
+  const query: Record<string, string | number | boolean> = {};
+  if (params.page !== undefined) query.page = params.page;
+  if (params.limit !== undefined) query.limit = params.limit;
+  if (params.search && params.search.trim()) query.search = params.search.trim();
+  if (params.status && params.status !== 'ALL') query.status = params.status;
+  if (params.activeOnly) query.activeOnly = true;
+
+  const res = await axios.get(`${API_BASE}/stores`, { params: query });
+  const items = (res.data?.data as Store[]) || [];
+  const pagination: StorePagination = res.data?.pagination ?? {
+    page: params.page ?? 1,
+    limit: params.limit ?? items.length,
+    total: items.length,
+    totalPages: 1,
+  };
+  const defaultStore = items.find((s) => s.isDefault) ?? items[0];
+  const summary: StoreSummary = res.data?.summary ?? {
+    totalStores: items.length,
+    activeStores: items.filter((s) => s.isActive !== false).length,
+    inactiveStores: items.filter((s) => s.isActive === false).length,
+    defaultStoreId: defaultStore?.id ?? null,
+    defaultStoreName: defaultStore?.name ?? 'Chưa thiết lập',
+    totalOrders: items.reduce((sum, s) => sum + (s.ordersCount ?? 0), 0),
+    totalTrips: items.reduce((sum, s) => sum + (s.tripsCount ?? 0), 0),
+  };
+
+  return { items, pagination, summary };
+}
+
+function serializeStorePayload(form: StoreFormState) {
+  return {
+    code: form.code.trim().toUpperCase(),
+    name: form.name.trim(),
+    address: form.address.trim(),
+    latitude: Number(form.latitude),
+    longitude: Number(form.longitude),
+    phone: form.phone.trim(),
+    isDefault: form.isDefault,
+    isActive: form.isDefault ? true : form.isActive,
+    notes: form.notes.trim(),
+  };
+}
+
+export async function createStore(form: StoreFormState): Promise<Store> {
+  const res = await axios.post(`${API_BASE}/stores`, serializeStorePayload(form));
+  return res.data.data as Store;
+}
+
+export async function updateStore(storeId: number, form: StoreFormState): Promise<Store> {
+  const res = await axios.put(`${API_BASE}/stores/${storeId}`, serializeStorePayload(form));
+  return res.data.data as Store;
+}
+
+export async function setDefaultStore(storeId: number): Promise<{ store: Store; message: string }> {
+  const res = await axios.patch(`${API_BASE}/stores/${storeId}/set-default`);
+  return {
+    store: res.data.data as Store,
+    message: (res.data?.message as string) || 'Đã đặt điểm xuất phát mặc định!',
+  };
+}
+
+export async function deleteStore(storeId: number): Promise<void> {
+  await axios.delete(`${API_BASE}/stores/${storeId}`);
 }
 
 export function getErrorMessage(err: unknown): string {

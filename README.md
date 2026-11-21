@@ -91,21 +91,24 @@ doan/
 │   │   ├── seed.ts              # Script nạp dữ liệu mẫu qua CLI
 │   │   └── seed-1000-products.ts # Script sinh 1.000 sản phẩm mẫu vào danh mục kho
 │   └── src/
-│       ├── index.ts             # Entrypoint Express & tự động seed khi DB/sản phẩm/tài xế trống
+│       ├── index.ts             # Entrypoint Express, tự động seed & đảm bảo điểm xuất phát mặc định
 │       ├── lib/
+│       │   ├── geo.ts           # Tính khoảng cách Haversine & kiểm tra bán kính giao hàng tối đa 5 km
 │       │   ├── prisma.ts        # Khởi tạo Prisma Client
-│       │   └── seeder.ts        # Logic tạo 1 Kho (Depot), Users, 5 Tài xế, 16 Sản phẩm & 10 Đơn hàng mẫu
+│       │   └── seeder.ts        # Logic tạo Kho mặc định (Depot), Users, 5 Tài xế, 16 Sản phẩm & 10 Đơn hàng mẫu
 │       ├── controllers/
 │       │   ├── auth.controller.ts    # Login, Me, System Overview, Seed API
 │       │   ├── driver.controller.ts  # CRUD tài xế (User + DriverProfile), lọc trạng thái/loại xe & phân trang server
-│       │   ├── order.controller.ts   # Tạo/sửa đơn hàng, sắp xếp mặc định createdAt DESC, chuyển trạng thái, gán tài xế & thao tác hàng loạt (bulk-action)
+│       │   ├── order.controller.ts   # Tạo/sửa đơn hàng (chọn điểm xuất phát & chặn cứng > 5 km), sắp xếp createdAt DESC, chuyển trạng thái, gán tài xế & bulk-action
 │       │   ├── product.controller.ts # CRUD sản phẩm, thống kê KPI & phân trang phía server
-│       │   └── trip.controller.ts    # Tối ưu/tạo chuyến OR-Tools, xuất phát (IN_TRANSIT), đổi tài xế, tối ưu lại & hủy chuyến
+│       │   ├── store.controller.ts   # CRUD điểm xuất phát (Multi-depot), đặt kho mặc định, thống kê đơn/chuyến & phân trang server
+│       │   └── trip.controller.ts    # Tối ưu/tạo chuyến OR-Tools (chặn cứng đơn > 5 km từ điểm xuất phát), xuất phát (IN_TRANSIT), đổi tài xế, tối ưu lại & hủy chuyến
 │       └── routes/
 │           ├── auth.routes.ts
 │           ├── driver.routes.ts
 │           ├── order.routes.ts
 │           ├── product.routes.ts
+│           ├── store.routes.ts
 │           └── trip.routes.ts
 ├── python-solver/               # Micro-service giải bài toán VRP với Google OR-Tools (:8090)
 │   ├── Dockerfile               # Docker image cho Python Solver
@@ -124,23 +127,25 @@ doan/
         ├── astryx-themes.ts     # Module theme do `astryx theme add neutral` sinh tự động
         ├── App.tsx              # Root <Theme>, <LayerProvider>, điều hướng trang & Toast
         ├── types/
-        │   └── dms.ts           # Domain types (Order, Product, Driver, Pagination), metadata & format tiền tệ
+        │   └── dms.ts           # Domain types (Order, Product, Driver, Store, Pagination), Haversine 5 km, metadata & format tiền tệ
         ├── api/
-        │   └── dmsApi.ts        # Axios client gọi REST API Backend (Orders, Trips, Products, Drivers)
+        │   └── dmsApi.ts        # Axios client gọi REST API Backend (Orders, Trips, Products, Drivers, Stores)
         └── components/
-            ├── Header.tsx                  # Top Bar: Chuyển trang Đơn hàng/Chuyến xe/Sản phẩm/Tài xế, Role, Theme, Seed/New
-            ├── OrderTable.tsx              # Trang chủ full-width: Bảng đơn hàng sắp xếp createdAt DESC, chọn nhiều dòng + thanh thao tác hàng loạt theo vai trò, tìm kiếm & lọc trạng thái
-            ├── OrderFormModal.tsx          # Hộp thoại Tạo/Sửa đơn hàng: Mini-map Leaflet + chọn sản phẩm danh mục
+            ├── Header.tsx                  # Top Bar: Chuyển trang Đơn hàng/Chuyến xe/Sản phẩm/Tài xế/Điểm xuất phát, Role, Theme, Seed/New
+            ├── OrderTable.tsx              # Trang chủ full-width: Bảng đơn hàng sắp xếp createdAt DESC (kèm tên kho xuất phát), thao tác hàng loạt theo vai trò, tìm kiếm & lọc trạng thái
+            ├── OrderFormModal.tsx          # Hộp thoại Tạo/Sửa đơn hàng: Chọn điểm xuất phát, mini-map Leaflet kèm vòng tròn 5 km (chặn cứng > 5 km) & chọn sản phẩm danh mục
             ├── AssignDriverModal.tsx       # Hộp thoại Astryx Dialog gán/đổi/bỏ gán tài xế trực tiếp cho từng đơn hàng
             ├── BulkAssignDriverModal.tsx   # Hộp thoại Astryx Dialog gán tài xế hàng loạt cho nhiều đơn đủ điều kiện
-            ├── TripManagementPage.tsx      # Trang Quản lý Chuyến xe: KPI, master-detail danh sách chuyến, RouteMap & thao tác vòng đời chuyến
-            ├── CreateTripModal.tsx         # Hộp thoại chọn đơn PACKED & tài xế để tối ưu/tạo chuyến mới bằng Google OR-Tools
+            ├── TripManagementPage.tsx      # Trang Quản lý Chuyến xe: KPI, master-detail danh sách chuyến (kèm điểm xuất phát), RouteMap & thao tác vòng đời chuyến
+            ├── CreateTripModal.tsx         # Hộp thoại chọn điểm xuất phát, tài xế & đơn PACKED trong bán kính 5 km để tối ưu/tạo chuyến bằng Google OR-Tools
             ├── ReassignTripDriverModal.tsx # Hộp thoại đổi tài xế phụ trách cho chuyến xe đang hoạt động
             ├── RouteMap.tsx                # Bản đồ Leaflet OSM / CARTO Dark Matter hiển thị lộ trình chuyến đang chọn
             ├── ProductManagementPage.tsx   # Trang Quản lý Sản phẩm: KPI, tìm kiếm, lọc danh mục & phân trang server
             ├── ProductFormModal.tsx        # Hộp thoại Astryx Dialog thêm/sửa sản phẩm trong kho
             ├── DriverManagementPage.tsx    # Trang Quản lý Tài xế: KPI, tìm kiếm, lọc trạng thái/loại xe & phân trang server
-            └── DriverFormModal.tsx         # Hộp thoại Astryx Dialog thêm/sửa tài khoản & phương tiện tài xế
+            ├── DriverFormModal.tsx         # Hộp thoại Astryx Dialog thêm/sửa tài khoản & phương tiện tài xế
+            ├── DepotManagementPage.tsx     # Trang Quản lý Điểm xuất phát: KPI, bản đồ tổng quan các kho kèm vòng tròn phủ sóng 5 km, bảng CRUD & phân trang server
+            └── DepotFormModal.tsx          # Hộp thoại Astryx Dialog thêm/sửa điểm xuất phát kèm bản đồ Leaflet chọn tọa độ & vùng phủ 5 km
 ```
 
 ---
@@ -238,12 +243,19 @@ model DriverProfile {
 
 model Store {
   id        Int      @id @default(autoincrement())
+  code      String?  @unique
   name      String
   address   String
   latitude  Float    // Điểm xuất phát (Depot) cho thuật toán VRP
   longitude Float
+  phone     String   @default("")
+  isDefault Boolean  @default(false)
+  isActive  Boolean  @default(true)
+  notes     String?
   orders    Order[]
   trips     Trip[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
 }
 
 model Order {
@@ -326,8 +338,8 @@ model Product {
 #### Quản lý Đơn hàng
 - `GET /api/orders`: Danh sách đơn hàng sắp xếp theo ngày tạo mới nhất (`createdAt DESC`, tie-breaker `id DESC`), hỗ trợ lọc `?status=NEW|PICKING|PACKED|DELIVERING|COMPLETED|FAILED`.
 - `GET /api/orders/:id`: Xem chi tiết đơn hàng và danh sách sản phẩm (`items`).
-- `POST /api/orders`: Tạo đơn hàng mới. Sản phẩm trong đơn phải được chọn từ danh mục `Product`; backend tự tra cứu `productName`, `sku`, `price` từ danh mục và tự tính `totalAmount`.
-- `PUT /api/orders/:id`: Chỉnh sửa đơn hàng (chỉ cho phép ở các trạng thái trước điều phối: `NEW`, `PICKING`, `PACKED`; trả về `400` nếu đơn đã `DELIVERING`, `COMPLETED` hoặc `FAILED`). Cập nhật thông tin khách hàng, tọa độ GPS và danh sách `OrderItem` (giữ nguyên `status`, tự tính lại `totalAmount`).
+- `POST /api/orders`: Tạo đơn hàng mới (nhận `storeId`, mặc định lấy điểm xuất phát `isDefault`). Kiểm tra điểm xuất phát đang hoạt động và **chặn cứng (`400`) nếu khoảng cách đường chim bay (Haversine) từ điểm xuất phát tới điểm giao > 5 km**. Sản phẩm trong đơn phải được chọn từ danh mục `Product`; backend tự tra cứu `productName`, `sku`, `price` từ danh mục và tự tính `totalAmount`.
+- `PUT /api/orders/:id`: Chỉnh sửa đơn hàng (chỉ cho phép ở các trạng thái trước điều phối: `NEW`, `PICKING`, `PACKED`; trả về `400` nếu đơn đã `DELIVERING`, `COMPLETED` hoặc `FAILED`). Hỗ trợ đổi điểm xuất phát (`storeId`), **chặn cứng (`400`) nếu khoảng cách Haversine > 5 km**, cập nhật thông tin khách hàng, tọa độ GPS và danh sách `OrderItem` (giữ nguyên `status`, tự tính lại `totalAmount`).
 - `PATCH /api/orders/:id/start-picking`: Chuyển trạng thái đơn từ `NEW` ➔ `PICKING`.
 - `PATCH /api/orders/:id/complete-packing`: Chuyển trạng thái đơn từ `PICKING` ➔ `PACKED`.
 - `PATCH /api/orders/:id/assign-driver`: Gán, đổi hoặc bỏ gán tài xế trực tiếp cho một đơn hàng (chạy trong Prisma transaction):
@@ -352,16 +364,25 @@ model Product {
 - `PUT /api/drivers/:id`: Cập nhật thông tin tài khoản, mật khẩu tùy chọn, phương tiện, trạng thái vận hành và cờ hoạt động `isActive`.
 - `DELETE /api/drivers/:id`: Chặn xóa (`400`) nếu tài xế đang có chuyến `ASSIGNED` hoặc `IN_TRANSIT`; với các chuyến đã hoàn tất, tự động gỡ liên kết (`Trip.driverId = null`) trước khi xóa `User` (cascade sang `DriverProfile`).
 
+#### Quản lý Điểm xuất phát (Multi-Depot / Store Management)
+- `GET /api/stores`: Danh sách điểm xuất phát (kèm `ordersCount`, `tripsCount`), hỗ trợ phân trang phía server (`?page=1&limit=20`), tìm kiếm theo mã kho/tên/địa chỉ/SĐT (`?search=`), lọc trạng thái (`?status=ALL|ACTIVE|INACTIVE`) hoặc chỉ lấy điểm đang hoạt động (`?activeOnly=true`). Trả về `data`, `pagination` và `summary` (`totalStores`, `activeStores`, `inactiveStores`, `defaultStoreId`, `defaultStoreName`, `totalOrders`, `totalTrips`).
+- `GET /api/stores/:id`: Xem chi tiết một điểm xuất phát.
+- `POST /api/stores`: Tạo điểm xuất phát mới (tự sinh mã `DEP-001`, `DEP-002`... nếu bỏ trống, kiểm tra trùng mã & tọa độ GPS hợp lệ). Nếu chọn `isDefault: true` (hoặc là kho đầu tiên), tự động đồng bộ duy nhất 1 điểm mặc định trong Prisma transaction và đặt `isActive: true`.
+- `PUT /api/stores/:id`: Cập nhật thông tin, tọa độ, trạng thái hoạt động và cờ mặc định; chặn tắt hoạt động hoặc bỏ mặc định khi chưa chọn điểm khác làm mặc định.
+- `PATCH /api/stores/:id/set-default`: Đặt nhanh một điểm xuất phát làm mặc định của hệ thống (tự động kích hoạt `isActive: true` và gỡ `isDefault` ở điểm cũ trong transaction).
+- `DELETE /api/stores/:id`: Chặn xóa (`400`) nếu là điểm xuất phát mặc định hoặc đã có đơn hàng/chuyến xe gắn liền (gợi ý chuyển sang trạng thái *Ngừng hoạt động*).
+
 #### Quản lý Chuyến xe & Tối ưu Lộ trình (Trip Lifecycle & OR-Tools Integration)
 - `GET /api/trips`: Danh sách chuyến xe (sắp xếp mới nhất trước), kèm thông tin kho (`store`), tài xế + hồ sơ phương tiện (`driver.driverProfile`) và danh sách đơn theo `deliverySequence`; hỗ trợ lọc `?status=ASSIGNED|IN_TRANSIT|COMPLETED` và tìm kiếm `?search=`.
 - `GET /api/trips/my-active`: Lấy chuyến xe đang thực hiện (hoặc chuyến mới nhất).
 - `POST /api/trips/optimize`:
-  - **Input:** `{ "storeId": 1, "orderIds": [1, 2, 3], "driverId": 3 }` (`driverId` tùy chọn — nếu bỏ trống sẽ ưu tiên tự động chọn tài xế `AVAILABLE` đang hoạt động).
+  - **Input:** `{ "storeId": 1, "orderIds": [1, 2, 3], "driverId": 3 }` (`storeId` tùy chọn — mặc định lấy điểm xuất phát `isDefault`; `driverId` tùy chọn — nếu bỏ trống sẽ ưu tiên tự động chọn tài xế `AVAILABLE` đang hoạt động).
   - **Luồng xử lý:**
-    1. Truy vấn tọa độ Depot (`Store`), kiểm tra tài xế hợp lệ và lấy tọa độ các đơn hàng `PACKED` được chọn.
-    2. Gọi `POST http://python-solver:8090/solve-vrp`.
-    3. Nhận danh sách điểm dừng đã sắp xếp tối ưu (`sequence: 1, 2, 3...`) và tổng quãng đường (`total_distance_meters`).
-    4. Khởi tạo bản ghi `Trip` (`ASSIGNED`), cập nhật trạng thái tài xế sang `ON_DELIVERY`, cập nhật `tripId`, `deliverySequence` và chuyển trạng thái các đơn hàng sang `DELIVERING`.
+    1. Truy vấn tọa độ Depot (`Store`) đang hoạt động, kiểm tra tài xế hợp lệ và lấy tọa độ các đơn hàng `PACKED` được chọn.
+    2. **Kiểm tra bán kính giao hàng ≤ 5 km (Haversine):** Chặn cứng (`400`) và liệt kê chi tiết mã đơn + khoảng cách nếu có bất kỳ đơn hàng nào cách điểm xuất phát quá 5 km.
+    3. Gọi `POST http://python-solver:8090/solve-vrp`.
+    4. Nhận danh sách điểm dừng đã sắp xếp tối ưu (`sequence: 1, 2, 3...`) và tổng quãng đường (`total_distance_meters`).
+    5. Khởi tạo bản ghi `Trip` (`ASSIGNED`), cập nhật trạng thái tài xế sang `ON_DELIVERY`, cập nhật `tripId`, `deliverySequence` và chuyển trạng thái các đơn hàng sang `DELIVERING`.
 - `PATCH /api/trips/:id/start`: Chuyển trạng thái chuyến xe từ `ASSIGNED` ➔ `IN_TRANSIT` và đảm bảo tài xế ở trạng thái `ON_DELIVERY`.
 - `PATCH /api/trips/:id/driver`: Đổi tài xế cho chuyến chưa hoàn thành (`{ "driverId": 4 }`), chuyển tài xế mới sang `ON_DELIVERY` và giải phóng tài xế cũ về `AVAILABLE` nếu không còn chuyến hoạt động khác.
 - `POST /api/trips/:id/reoptimize`: Gọi lại Google OR-Tools VRP cho các đơn `DELIVERING` còn lại của chuyến xe, cập nhật lại `deliverySequence` và `totalDistance`.
@@ -414,10 +435,10 @@ model Product {
 
 ## 7. Đặc Tả Giao Diện Web Admin Dashboard
 
-Giao diện đơn trang (SPA) tại `http://localhost:5173` được xây dựng bằng **Meta Astryx Design System** (`@astryxdesign/core`, `@astryxdesign/theme-neutral`) kết hợp **Tailwind CSS v4** (qua Astryx Tailwind Bridge `@astryxdesign/core/tailwind-theme.css` và thứ tự `@layer` chuẩn), hỗ trợ đầy đủ **Light / System / Dark mode** và gồm 4 trang quản lý chính:
+Giao diện đơn trang (SPA) tại `http://localhost:5173` được xây dựng bằng **Meta Astryx Design System** (`@astryxdesign/core`, `@astryxdesign/theme-neutral`) kết hợp **Tailwind CSS v4** (qua Astryx Tailwind Bridge `@astryxdesign/core/tailwind-theme.css` và thứ tự `@layer` chuẩn), hỗ trợ đầy đủ **Light / System / Dark mode** và gồm 5 trang quản lý chính:
 
 1. **Thanh Công Cụ Trên Cùng (Top Bar — `Header.tsx`):**
-   - **Page Switcher (`SegmentedControl`):** Chuyển đổi nhanh giữa 4 trang quản lý — **Đơn hàng** (`#orders`, trang chủ), **Chuyến xe** (`#trips`), **Sản phẩm** (`#products`) và **Tài xế** (`#drivers`), hiển thị tổng số lượng tương ứng.
+   - **Page Switcher (`SegmentedControl`):** Chuyển đổi nhanh giữa 5 trang quản lý — **Đơn hàng** (`#orders`, trang chủ), **Chuyến xe** (`#trips`), **Sản phẩm** (`#products`), **Tài xế** (`#drivers`) và **Điểm xuất phát** (`#depots`), hiển thị tổng số lượng tương ứng.
    - **Role Switcher (`Selector`):** Chuyển đổi tức thì giữa 3 vai trò (`Quản lý / Điều phối - ADMIN`, `Nhân viên Kho - WAREHOUSE`, `Tài xế Giao hàng - DRIVER`) mà không cần đăng xuất/đăng nhập lại.
    - **Theme Mode Switcher (`SegmentedControl`):** Chuyển đổi chế độ giao diện **Sáng / Hệ thống / Tối** (lưu trong `localStorage`), tự động đồng bộ toàn bộ token màu Astryx và lớp bản đồ Leaflet.
    - **Tạo đơn mới (`Button` + `Dialog`):** Mở hộp thoại thống nhất cho cả Tạo và Sửa đơn hàng (`OrderFormModal.tsx`).
@@ -431,17 +452,18 @@ Giao diện đơn trang (SPA) tại `http://localhost:5173` được xây dựng
      - **Thanh công cụ ngữ cảnh** xuất hiện ngay trên bảng khi chọn ≥ 1 đơn, tự tính số lượng đơn đủ điều kiện cho từng nút thao tác (hỗ trợ chọn lẫn nhiều trạng thái) và phân quyền theo vai trò:
        - `WAREHOUSE` & `ADMIN`: **Bắt đầu nhặt**, **Đóng gói xong** (thực thi ngay), **Gán tài xế** (mở `BulkAssignDriverModal.tsx`), **Tạo chuyến tối ưu** (mở `CreateTripModal.tsx` đã chọn sẵn các đơn `PACKED`), và **Bỏ gán tài xế** (có `AlertDialog` xác nhận).
        - `DRIVER` & `ADMIN`: **Giao thành công** và **Giao thất bại** (có `AlertDialog` xác nhận hiển thị số lượng và mã đơn ảnh hưởng).
-   - Bảng đơn hàng (`Table`, `Badge`, `Button`, `IconButton`) hiển thị mã đơn, mã chuyến/thứ tự dừng, ngày tạo, thông tin khách hàng, tổng tiền, trạng thái, tài xế phụ trách và các thao tác vòng đời đơn (chỉnh sửa, nhặt hàng, đóng gói, gán/đổi tài xế, giao thành công/thất bại).
+   - Bảng đơn hàng (`Table`, `Badge`, `Button`, `IconButton`) hiển thị mã đơn, mã chuyến/thứ tự dừng, ngày tạo, thông tin khách hàng, tên kho xuất phát, tổng tiền, trạng thái, tài xế phụ trách và các thao tác vòng đời đơn (chỉnh sửa, nhặt hàng, đóng gói, gán/đổi tài xế, giao thành công/thất bại).
    - **Hộp thoại Gán Tài Xế (`AssignDriverModal.tsx`):** Hiển thị tóm tắt đơn hàng, ô tìm kiếm tài xế theo tên/SĐT/biển số/loại xe, danh sách tài xế đủ điều kiện (ưu tiên `AVAILABLE` trước `ON_DELIVERY` kèm số đơn đang giao) và nút **"Bỏ gán tài xế"** khi đơn đang ở trạng thái `DELIVERING`.
    - **Hộp thoại Tạo/Sửa Đơn Hàng (`OrderFormModal.tsx`):**
      - Sử dụng cấu trúc Astryx `Dialog` + `Layout` (`LayoutContent` / `LayoutFooter`) để nút Lưu/Hủy luôn cố định ở chân hộp thoại.
+     - **Chọn Điểm xuất phát & Kiểm tra bán kính 5 km:** Dropdown chọn kho xuất phát (tự động điền sẵn kho mặc định), tính trực tiếp khoảng cách Haversine từ kho đến điểm giao, vẽ vòng tròn bán kính **5 km** trên bản đồ và chặn cứng nút Lưu nếu vượt quá 5 km.
      - **Bản đồ mini Leaflet tương tác:** Click lên bản đồ hoặc kéo ghim xanh để chọn tọa độ giao hàng, đồng bộ 2 chiều với ô nhập `Latitude` / `Longitude`.
      - **Chọn sản phẩm bắt buộc từ danh mục:** Ô tìm kiếm theo tên hoặc mã SKU gọi trực tiếp API danh mục sản phẩm đang kinh doanh; bấm **Thêm** để đưa vào đơn (tự tăng `Qty` nếu đã có).
      - **Bảng Order Item 4 cột:** `Tên sản phẩm`, `SKU`, `Giá` (chỉ đọc) và `Qty` (cột duy nhất cho phép sửa, kèm nút xóa dòng và tổng tiền tự tính).
 3. **Trang Quản Lý Chuyến Xe (`#trips`, `TripManagementPage.tsx`, `CreateTripModal.tsx`, `ReassignTripDriverModal.tsx` & `RouteMap.tsx`):**
    - **4 thẻ KPI tổng quan:** Tổng chuyến xe, Chờ xuất phát (`ASSIGNED`), Đang giao hàng (`IN_TRANSIT`), Hoàn thành (`COMPLETED`).
    - **Bố cục Master-Detail 2 cột:**
-     - **Cột trái (Danh sách chuyến xe):** Ô tìm kiếm (mã chuyến, tài xế, biển số, mã đơn), tab lọc trạng thái (`ALL`, `ASSIGNED`, `IN_TRANSIT`, `COMPLETED`), nút **"Tạo chuyến mới"** mở `CreateTripModal.tsx` (chọn đơn `PACKED` + tài xế và chạy tối ưu Google OR-Tools VRP) và danh sách thẻ chuyến xe hiển thị tiến độ điểm giao & tổng quãng đường.
+     - **Cột trái (Danh sách chuyến xe):** Ô tìm kiếm (mã chuyến, tài xế, biển số, mã đơn), tab lọc trạng thái (`ALL`, `ASSIGNED`, `IN_TRANSIT`, `COMPLETED`), nút **"Tạo chuyến mới"** mở `CreateTripModal.tsx` (chọn điểm xuất phát + tài xế + các đơn `PACKED` trong bán kính **5 km**, tự khóa chọn đơn vượt quá 5 km và chạy tối ưu Google OR-Tools VRP) và danh sách thẻ chuyến xe hiển thị điểm xuất phát, tiến độ điểm giao & tổng quãng đường.
      - **Cột phải (Bản đồ & Chi tiết chuyến đang chọn):**
        - `RouteMap.tsx`: Tự động chuyển tile giữa **OpenStreetMap** (sáng) và **CARTO Dark Matter** (tối), hiển thị Depot (`🏪`), các Marker đánh số thứ tự dừng **`1, 2, 3...`** và đường nối **Polyline** `Depot ➔ Stop #1 ➔ Stop #2...`.
        - Thanh thao tác vòng đời chuyến: **Bắt đầu giao** (`ASSIGNED` ➔ `IN_TRANSIT`), **Đổi tài xế** (`ReassignTripDriverModal.tsx`), **Tối ưu lại (OR-Tools)** cho các điểm `DELIVERING` còn lại, **Hủy chuyến** (có hộp thoại xác nhận, đưa đơn `DELIVERING` về `PACKED`), và nút **Giao xong / Thất bại** cho từng điểm dừng.
@@ -459,6 +481,11 @@ Giao diện đơn trang (SPA) tại `http://localhost:5173` được xây dựng
    - **Tìm kiếm & Lọc:** Tìm kiếm theo tên/SĐT/email/biển số (debounce `250ms`), lọc theo trạng thái vận hành (`AVAILABLE`, `ON_DELIVERY`, `OFFLINE`) và loại xe (`Xe máy`, `Xe tải nhỏ`, `Xe van`).
    - **Thông tin chuyến giao & Phân trang server:** Hiển thị mã chuyến đang chạy (`TRIP-...`) cùng tổng số chuyến của mỗi tài xế, hỗ trợ phân trang phía server (`10 / 20 / 50 / 100`).
    - **Phân quyền & Thao tác CRUD:** Chỉ `ADMIN` được thêm, chỉnh sửa (`DriverFormModal.tsx`), bật/tắt hoạt động và xóa tài xế (tự động khóa nút xóa khi tài xế đang có chuyến hoạt động); `WAREHOUSE` và `DRIVER` ở chế độ chỉ xem.
+6. **Trang Quản Lý Điểm Xuất Phát (`#depots`, `DepotManagementPage.tsx` & `DepotFormModal.tsx`):**
+   - **4 thẻ KPI tổng quan:** Tổng điểm xuất phát, Đang hoạt động, Điểm xuất phát mặc định (kèm bán kính phục vụ tối đa 5 km) và tổng Đơn hàng / Chuyến xe.
+   - **Bản đồ tổng quan Leaflet:** Hiển thị toàn bộ các điểm xuất phát (đánh dấu nổi bật kho mặc định ⭐); click vào một điểm trên bản đồ hoặc bảng danh sách để focus và xem vòng tròn phủ sóng **5 km**.
+   - **Tìm kiếm, Lọc & Phân trang server:** Tìm theo mã kho, tên, địa chỉ, SĐT (debounce `250ms`), lọc trạng thái (`Tất cả`, `Đang hoạt động`, `Ngừng hoạt động`) và phân trang phía server (`10 / 20 / 50`).
+   - **Phân quyền & Thao tác CRUD:** Chỉ `ADMIN` được thêm, chỉnh sửa (`DepotFormModal.tsx` có bản đồ chọn tọa độ + vòng tròn 5 km), đặt mặc định, bật/tắt hoạt động và xóa (chặn xóa kho mặc định hoặc kho đã có đơn hàng/chuyến xe gắn vào); `WAREHOUSE` và `DRIVER` ở chế độ chỉ xem.
 
 ---
 
@@ -545,6 +572,15 @@ curl -X POST http://localhost:3000/api/orders/bulk-action \
 curl -X POST http://localhost:3000/api/orders/bulk-action \
   -H "Content-Type: application/json" \
   -d '{"action": "ASSIGN_DRIVER", "orderIds": [1, 2], "driverId": 3}'
+
+# 11. Quản lý Điểm xuất phát (Multi-depot) & đặt kho mặc định
+curl "http://localhost:3000/api/stores?page=1&limit=20"
+
+curl -X POST http://localhost:3000/api/stores \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Kho Quận 1","address":"123 Lê Lợi, Quận 1, TP.HCM","latitude":10.7725,"longitude":106.6980,"phone":"02838221100"}'
+
+curl -X PATCH http://localhost:3000/api/stores/2/set-default
 ```
 
 #### Nạp nhanh 1.000 sản phẩm mẫu để kiểm thử phân trang:

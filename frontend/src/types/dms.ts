@@ -1,5 +1,5 @@
 export type Role = 'ADMIN' | 'WAREHOUSE' | 'DRIVER';
-export type ActivePage = 'orders' | 'trips' | 'products' | 'drivers';
+export type ActivePage = 'orders' | 'trips' | 'products' | 'drivers' | 'depots';
 export type DriverStatus = 'AVAILABLE' | 'ON_DELIVERY' | 'OFFLINE';
 export type TripStatus = 'ASSIGNED' | 'IN_TRANSIT' | 'COMPLETED';
 export type OrderStatus =
@@ -39,10 +39,101 @@ export interface OrderItem {
 
 export interface Store {
   id: number;
+  code?: string | null;
   name: string;
   address: string;
   latitude: number;
   longitude: number;
+  phone?: string;
+  isDefault?: boolean;
+  isActive?: boolean;
+  notes?: string | null;
+  ordersCount?: number;
+  tripsCount?: number;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface StorePagination {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+}
+
+export interface StoreSummary {
+  totalStores: number;
+  activeStores: number;
+  inactiveStores: number;
+  defaultStoreId: number | null;
+  defaultStoreName: string;
+  totalOrders: number;
+  totalTrips: number;
+}
+
+export interface PaginatedStoresResponse {
+  items: Store[];
+  pagination: StorePagination;
+  summary: StoreSummary;
+}
+
+export interface StoreFormState {
+  code: string;
+  name: string;
+  address: string;
+  latitude: string;
+  longitude: string;
+  phone: string;
+  isDefault: boolean;
+  isActive: boolean;
+  notes: string;
+}
+
+export const INITIAL_STORE_FORM: StoreFormState = {
+  code: '',
+  name: '',
+  address: '',
+  latitude: '10.7423',
+  longitude: '106.7024',
+  phone: '',
+  isDefault: false,
+  isActive: true,
+  notes: '',
+};
+
+export function storeToFormState(store: Store): StoreFormState {
+  return {
+    code: store.code || '',
+    name: store.name,
+    address: store.address,
+    latitude: String(store.latitude),
+    longitude: String(store.longitude),
+    phone: store.phone || '',
+    isDefault: Boolean(store.isDefault),
+    isActive: store.isActive !== false,
+    notes: store.notes || '',
+  };
+}
+
+export const MAX_DELIVERY_DISTANCE_KM = 5;
+
+export function haversineDistanceKm(
+  lat1: number,
+  lng1: number,
+  lat2: number,
+  lng2: number
+): number {
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) *
+      Math.cos(toRad(lat2)) *
+      Math.sin(dLng / 2) *
+      Math.sin(dLng / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return 6371 * c;
 }
 
 export interface UserDriverProfileSummary {
@@ -101,6 +192,7 @@ export interface OrderItemFormState {
 }
 
 export interface OrderFormState {
+  storeId: string;
   customerName: string;
   customerPhone: string;
   customerAddress: string;
@@ -166,6 +258,10 @@ export function canRoleManageDrivers(role: Role): boolean {
   return role === 'ADMIN';
 }
 
+export function canRoleManageDepots(role: Role): boolean {
+  return role === 'ADMIN';
+}
+
 export function canRoleCreateTrips(role: Role): boolean {
   return role === 'ADMIN' || role === 'WAREHOUSE';
 }
@@ -183,6 +279,7 @@ export function canRoleUpdateStopDelivery(role: Role): boolean {
 }
 
 export const INITIAL_ORDER_FORM: OrderFormState = {
+  storeId: '',
   customerName: '',
   customerPhone: '',
   customerAddress: '',
@@ -194,6 +291,7 @@ export const INITIAL_ORDER_FORM: OrderFormState = {
 export function orderToFormState(order: Order, catalog: Product[] = []): OrderFormState {
   const byName = new Map(catalog.map((p) => [p.name.toLowerCase(), p]));
   return {
+    storeId: String(order.storeId),
     customerName: order.customerName,
     customerPhone: order.customerPhone,
     customerAddress: order.customerAddress,
@@ -225,10 +323,15 @@ export function computeOrderFormTotal(items: OrderItemFormState[]): number {
 
 export const DEFAULT_DEPOT: Store = {
   id: 1,
+  code: 'DEP-001',
   name: 'Lotte Mart Quận 7 (Depot)',
   address: '469 Nguyễn Hữu Thọ, Tân Hưng, Quận 7, TP.HCM',
   latitude: 10.7423,
   longitude: 106.7024,
+  phone: '02837753232',
+  isDefault: true,
+  isActive: true,
+  notes: '',
 };
 
 export const ROLE_META: Record<

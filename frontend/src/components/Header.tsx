@@ -11,6 +11,7 @@ import {
   Truck,
   UserCheck,
   Users,
+  Warehouse,
 } from 'lucide-react';
 import { Badge } from '@astryxdesign/core/Badge';
 import { Button } from '@astryxdesign/core/Button';
@@ -36,6 +37,7 @@ interface HeaderProps {
   tripsCount: number;
   productsCount: number;
   driversCount: number;
+  storesCount: number;
   loading: boolean;
   onOpenNewOrder: () => void;
   onSeedOrders: () => void;
@@ -58,6 +60,7 @@ export function Header({
   tripsCount,
   productsCount,
   driversCount,
+  storesCount,
   loading,
   onOpenNewOrder,
   onSeedOrders,
@@ -110,6 +113,11 @@ export function Header({
               value="drivers"
               label={`Tài xế (${driversCount})`}
               icon={<Users className="w-3.5 h-3.5" />}
+            />
+            <SegmentedControlItem
+              value="depots"
+              label={`Điểm xuất phát (${storesCount})`}
+              icon={<Warehouse className="w-3.5 h-3.5" />}
             />
           </SegmentedControl>
 

@@ -12,26 +12,33 @@ import {
   createDriver,
   createOrder,
   createProduct,
+  createStore,
   deleteDriver,
   deleteProduct,
+  deleteStore,
   failDeliveryOrder,
   fetchDashboardData,
   fetchDrivers,
   fetchProducts,
+  fetchStores,
   getErrorMessage,
   optimizeTripRoute,
   reassignTripDriver,
   reoptimizeTrip,
   seedSampleOrders,
+  setDefaultStore,
   startPickingOrder,
   startTrip,
   updateDriver,
   updateOrder,
   updateProduct,
+  updateStore,
 } from './api/dmsApi';
 import { AssignDriverModal } from './components/AssignDriverModal';
 import { BulkAssignDriverModal } from './components/BulkAssignDriverModal';
 import { CreateTripModal } from './components/CreateTripModal';
+import { DepotFormModal } from './components/DepotFormModal';
+import { DepotManagementPage } from './components/DepotManagementPage';
 import { DriverFormModal } from './components/DriverFormModal';
 import { DriverManagementPage } from './components/DriverManagementPage';
 import { Header } from './components/Header';
@@ -45,9 +52,13 @@ import {
   INITIAL_DRIVER_FORM,
   INITIAL_ORDER_FORM,
   INITIAL_PRODUCT_FORM,
+  INITIAL_STORE_FORM,
+  MAX_DELIVERY_DISTANCE_KM,
   driverToFormState,
+  haversineDistanceKm,
   orderToFormState,
   productToFormState,
+  storeToFormState,
   type ActivePage,
   type BulkOrderActionType,
   type Driver,
@@ -62,6 +73,9 @@ import {
   type ProductSummary,
   type Role,
   type Store,
+  type StoreFormState,
+  type StorePagination,
+  type StoreSummary,
   type ThemeMode,
   type Trip,
 } from './types/dms';
@@ -91,6 +105,7 @@ function readInitialPage(): ActivePage {
     if (window.location.hash === '#trips') return 'trips';
     if (window.location.hash === '#products') return 'products';
     if (window.location.hash === '#drivers') return 'drivers';
+    if (window.location.hash === '#depots') return 'depots';
   }
   return 'orders';
 }
@@ -123,6 +138,34 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
   const [loadingProducts, setLoadingProducts] = useState<boolean>(false);
 
   const [depot, setDepot] = useState<Store>(DEFAULT_DEPOT);
+  const [allStores, setAllStores] = useState<Store[]>([DEFAULT_DEPOT]);
+  const [stores, setStores] = useState<Store[]>([]);
+  const [storePagination, setStorePagination] = useState<StorePagination>({
+    page: 1,
+    limit: 20,
+    total: 0,
+    totalPages: 1,
+  });
+  const [storeSummary, setStoreSummary] = useState<StoreSummary>({
+    totalStores: 0,
+    activeStores: 0,
+    inactiveStores: 0,
+    defaultStoreId: null,
+    defaultStoreName: DEFAULT_DEPOT.name,
+    totalOrders: 0,
+    totalTrips: 0,
+  });
+  const [storePage, setStorePage] = useState<number>(1);
+  const [storePageSize, setStorePageSize] = useState<number>(20);
+  const [storeSearch, setStoreSearch] = useState<string>('');
+  const [debouncedStoreSearch, setDebouncedStoreSearch] = useState<string>('');
+  const [storeStatusFilter, setStoreStatusFilter] = useState<string>('ALL');
+  const [loadingStores, setLoadingStores] = useState<boolean>(false);
+  const [savingStore, setSavingStore] = useState<boolean>(false);
+  const [showStoreModal, setShowStoreModal] = useState<boolean>(false);
+  const [storeModalMode, setStoreModalMode] = useState<'create' | 'edit'>('create');
+  const [editingStore, setEditingStore] = useState<Store | null>(null);
+  const [storeForm, setStoreForm] = useState<StoreFormState>(INITIAL_STORE_FORM);
   const [trips, setTrips] = useState<Trip[]>([]);
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [orderSearch, setOrderSearch] = useState<string>('');
@@ -201,6 +244,13 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
     }, 250);
     return () => window.clearTimeout(timer);
   }, [driverSearch]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedStoreSearch(storeSearch);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [storeSearch]);
 
   const notify = useCallback(
     (text: string, type: 'info' | 'error' = 'info') => {
@@ -288,6 +338,31 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
     }
   }, []);
 
+  const loadStoresPage = useCallback(
+    async (
+      page = storePage,
+      limit = storePageSize,
+      search = debouncedStoreSearch,
+      status = storeStatusFilter
+    ) => {
+      setLoadingStores(true);
+      try {
+        const res = await fetchStores({ page, limit, search, status });
+        setStores(res.items);
+        setStorePagination(res.pagination);
+        setStoreSummary(res.summary);
+        if (res.pagination.page !== page) {
+          setStorePage(res.pagination.page);
+        }
+      } catch (err) {
+        notify(`Không thể tải danh sách điểm xuất phát: ${getErrorMessage(err)}`, 'error');
+      } finally {
+        setLoadingStores(false);
+      }
+    },
+    [storePage, storePageSize, debouncedStoreSearch, storeStatusFilter, notify]
+  );
+
   const loadAllData = useCallback(async () => {
     setLoading(true);
     try {
@@ -300,6 +375,9 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
       setTrips(data.trips);
       if (data.depot) {
         setDepot(data.depot);
+      }
+      if (data.stores.length > 0) {
+        setAllStores(data.stores);
       }
     } catch (err) {
       notify(`Không thể kết nối Backend: ${getErrorMessage(err)}`, 'error');
@@ -337,6 +415,10 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
     driverStatusFilter,
     driverVehicleFilter,
   ]);
+
+  useEffect(() => {
+    void loadStoresPage(storePage, storePageSize, debouncedStoreSearch, storeStatusFilter);
+  }, [loadStoresPage, storePage, storePageSize, debouncedStoreSearch, storeStatusFilter]);
 
   const handleSeedOrders = async () => {
     setLoading(true);
@@ -483,10 +565,11 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
   };
 
   const handleConfirmBulkCreateTrip = async (
+    storeId: number,
     orderIds: number[],
     driverId: number | null
   ) => {
-    const created = await handleCreateTrip(orderIds, driverId);
+    const created = await handleCreateTrip(storeId, orderIds, driverId);
     if (created) {
       setShowBulkCreateTripModal(false);
       setBulkCreateTripOrderIds([]);
@@ -509,6 +592,7 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
   };
 
   const handleCreateTrip = async (
+    storeId: number,
     orderIds: number[],
     driverId: number | null
   ): Promise<Trip | null> => {
@@ -519,14 +603,14 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
 
     setOptimizing(true);
     try {
-      const trip = await optimizeTripRoute(depot.id, orderIds, driverId);
+      const trip = await optimizeTripRoute(storeId, orderIds, driverId);
       const driverLabel = trip?.driver?.name ? ` — Tài xế: ${trip.driver.name}` : '';
       notify(
         `Google OR-Tools đã tối ưu lộ trình cho ${orderIds.length} điểm giao (${(
           (trip?.totalDistance || 0) / 1000
         ).toFixed(2)} km)${driverLabel}!`
       );
-      await Promise.all([loadAllData(), loadDriversPage()]);
+      await Promise.all([loadAllData(), loadDriversPage(), loadStoresPage()]);
       return trip;
     } catch (err) {
       notify(`Lỗi gọi OR-Tools Solver: ${getErrorMessage(err)}`, 'error');
@@ -579,7 +663,12 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
   const handleOpenCreateOrder = () => {
     setOrderModalMode('create');
     setEditingOrder(null);
-    setOrderForm(INITIAL_ORDER_FORM);
+    setOrderForm({
+      ...INITIAL_ORDER_FORM,
+      storeId: String(depot.id),
+      latitude: (depot.latitude + 0.004).toFixed(5),
+      longitude: (depot.longitude + 0.005).toFixed(5),
+    });
     setShowOrderModal(true);
   };
 
@@ -610,6 +699,19 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
       lng > 180
     ) {
       notify('Vui lòng nhập tọa độ GPS hợp lệ hoặc chọn vị trí trên bản đồ.', 'error');
+      return;
+    }
+
+    const targetStoreId = Number(orderForm.storeId) || depot.id;
+    const targetStore = allStores.find((s) => s.id === targetStoreId) ?? depot;
+    const distKm = haversineDistanceKm(targetStore.latitude, targetStore.longitude, lat, lng);
+    if (distKm > MAX_DELIVERY_DISTANCE_KM) {
+      notify(
+        `Điểm giao hàng cách "${targetStore.name}" ${distKm.toFixed(
+          2
+        )} km, vượt quá bán kính tối đa ${MAX_DELIVERY_DISTANCE_KM} km!`,
+        'error'
+      );
       return;
     }
 
@@ -648,7 +750,7 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
       setShowOrderModal(false);
       setEditingOrder(null);
       setOrderForm(INITIAL_ORDER_FORM);
-      await loadAllData();
+      await Promise.all([loadAllData(), loadStoresPage()]);
     } catch (err) {
       notify(getErrorMessage(err), 'error');
     } finally {
@@ -906,6 +1008,120 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
     setDriverPage(1);
   };
 
+  const handleOpenCreateStore = () => {
+    setStoreModalMode('create');
+    setEditingStore(null);
+    setStoreForm({
+      ...INITIAL_STORE_FORM,
+      latitude: String(depot.latitude),
+      longitude: String(depot.longitude),
+    });
+    setShowStoreModal(true);
+  };
+
+  const handleOpenEditStore = (store: Store) => {
+    setStoreModalMode('edit');
+    setEditingStore(store);
+    setStoreForm(storeToFormState(store));
+    setShowStoreModal(true);
+  };
+
+  const handleSubmitStore = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!storeForm.name.trim() || !storeForm.address.trim()) {
+      notify('Vui lòng nhập đầy đủ tên và địa chỉ điểm xuất phát.', 'error');
+      return;
+    }
+    const lat = Number(storeForm.latitude);
+    const lng = Number(storeForm.longitude);
+    if (
+      storeForm.latitude.trim() === '' ||
+      storeForm.longitude.trim() === '' ||
+      !Number.isFinite(lat) ||
+      !Number.isFinite(lng) ||
+      lat < -90 ||
+      lat > 90 ||
+      lng < -180 ||
+      lng > 180
+    ) {
+      notify('Vui lòng nhập tọa độ GPS hợp lệ hoặc chọn vị trí trên bản đồ.', 'error');
+      return;
+    }
+
+    setSavingStore(true);
+    try {
+      if (storeModalMode === 'edit' && editingStore) {
+        await updateStore(editingStore.id, storeForm);
+        notify(`Đã cập nhật điểm xuất phát "${storeForm.name.trim()}" thành công!`);
+      } else {
+        await createStore(storeForm);
+        notify(`Đã thêm điểm xuất phát "${storeForm.name.trim()}" thành công!`);
+      }
+      setShowStoreModal(false);
+      setEditingStore(null);
+      setStoreForm(INITIAL_STORE_FORM);
+      await Promise.all([loadStoresPage(), loadAllData()]);
+    } catch (err) {
+      notify(getErrorMessage(err), 'error');
+    } finally {
+      setSavingStore(false);
+    }
+  };
+
+  const handleSetDefaultStore = async (store: Store) => {
+    try {
+      const { message } = await setDefaultStore(store.id);
+      notify(message, 'info');
+      await Promise.all([loadStoresPage(), loadAllData()]);
+    } catch (err) {
+      notify(getErrorMessage(err), 'error');
+    }
+  };
+
+  const handleToggleStoreActive = async (store: Store) => {
+    try {
+      const nextIsActive = store.isActive === false;
+      const nextForm: StoreFormState = {
+        ...storeToFormState(store),
+        isActive: nextIsActive,
+      };
+      await updateStore(store.id, nextForm);
+      notify(
+        nextIsActive
+          ? `Đã kích hoạt lại điểm xuất phát "${store.name}".`
+          : `Đã chuyển "${store.name}" sang trạng thái Ngừng hoạt động.`
+      );
+      await Promise.all([loadStoresPage(), loadAllData()]);
+    } catch (err) {
+      notify(getErrorMessage(err), 'error');
+    }
+  };
+
+  const handleDeleteStore = async (store: Store) => {
+    try {
+      await deleteStore(store.id);
+      notify(`Đã xóa điểm xuất phát "${store.name}" thành công!`);
+      await Promise.all([loadStoresPage(), loadAllData()]);
+    } catch (err) {
+      notify(getErrorMessage(err), 'error');
+    }
+  };
+
+  const handleStoreSearchChange = (value: string) => {
+    setStoreSearch(value);
+    setStorePage(1);
+  };
+
+  const handleStoreStatusFilterChange = (value: string) => {
+    setStoreStatusFilter(value);
+    setStorePage(1);
+  };
+
+  const handleStorePageSizeChange = (nextSize: number) => {
+    setStorePageSize(nextSize);
+    setStorePage(1);
+  };
+
   return (
     <div className="min-h-screen flex flex-col bg-body text-primary">
       <Header
@@ -919,6 +1135,7 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
         tripsCount={trips.length}
         productsCount={productSummary.totalProducts}
         driversCount={driverSummary.totalDrivers}
+        storesCount={storeSummary.totalStores}
         loading={loading}
         onOpenNewOrder={handleOpenCreateOrder}
         onSeedOrders={handleSeedOrders}
@@ -955,6 +1172,7 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
           <TripManagementPage
             role={role}
             depot={depot}
+            stores={allStores}
             trips={trips}
             packedOrders={packedOrders}
             availableDrivers={availableDrivers}
@@ -990,7 +1208,7 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
             onDeleteProduct={handleDeleteProduct}
           />
         </main>
-      ) : (
+      ) : activePage === 'drivers' ? (
         <main className="flex-1 max-w-[1600px] w-full mx-auto px-4 sm:px-6 py-5">
           <DriverManagementPage
             role={role}
@@ -1012,6 +1230,29 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
             onDeleteDriver={handleDeleteDriver}
           />
         </main>
+      ) : (
+        <main className="flex-1 max-w-[1600px] w-full mx-auto px-4 sm:px-6 py-5">
+          <DepotManagementPage
+            role={role}
+            stores={stores}
+            allStores={allStores}
+            pagination={storePagination}
+            summary={storeSummary}
+            searchQuery={storeSearch}
+            onSearchQueryChange={handleStoreSearchChange}
+            statusFilter={storeStatusFilter}
+            onStatusFilterChange={handleStoreStatusFilterChange}
+            onPageChange={setStorePage}
+            onPageSizeChange={handleStorePageSizeChange}
+            loading={loadingStores}
+            isDarkMode={isDarkMode}
+            onOpenCreateStore={handleOpenCreateStore}
+            onEditStore={handleOpenEditStore}
+            onSetDefaultStore={handleSetDefaultStore}
+            onToggleStoreActive={handleToggleStoreActive}
+            onDeleteStore={handleDeleteStore}
+          />
+        </main>
       )}
 
       <OrderFormModal
@@ -1028,6 +1269,7 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
         onFormChange={setOrderForm}
         products={catalogProducts}
         depot={depot}
+        stores={allStores}
         isDarkMode={isDarkMode}
         submitting={savingOrder}
         onSubmit={handleSubmitOrder}
@@ -1103,9 +1345,28 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
         }}
         packedOrders={packedOrders}
         availableDrivers={availableDrivers}
+        stores={allStores}
+        defaultDepot={depot}
         submitting={optimizing}
         initialSelectedOrderIds={bulkCreateTripOrderIds}
         onCreateTrip={handleConfirmBulkCreateTrip}
+      />
+
+      <DepotFormModal
+        isOpen={showStoreModal}
+        onOpenChange={(open) => {
+          setShowStoreModal(open);
+          if (!open) {
+            setEditingStore(null);
+          }
+        }}
+        mode={storeModalMode}
+        editingStore={editingStore}
+        form={storeForm}
+        onFormChange={setStoreForm}
+        isDarkMode={isDarkMode}
+        submitting={savingStore}
+        onSubmit={handleSubmitStore}
       />
     </div>
   );

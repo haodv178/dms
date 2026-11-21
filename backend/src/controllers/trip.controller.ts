@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { DriverStatus, OrderStatus, Prisma, Role } from '@prisma/client';
 import axios from 'axios';
 import prisma from '../lib/prisma';
+import { checkDeliveryRadius, MAX_DELIVERY_DISTANCE_KM } from '../lib/geo';
 
 const PYTHON_SOLVER_URL = process.env.PYTHON_SOLVER_URL || 'http://localhost:8090';
 
@@ -63,9 +64,20 @@ export const optimizeAndCreateTrip = async (req: Request, res: Response) => {
     }
 
     // 1. Tìm thông tin Store (Depot)
-    const store = await prisma.store.findUnique({ where: { id: Number(storeId) } });
+    const store = storeId
+      ? await prisma.store.findUnique({ where: { id: Number(storeId) } })
+      : await prisma.store.findFirst({
+          where: { isActive: true },
+          orderBy: [{ isDefault: 'desc' }, { id: 'asc' }],
+        });
     if (!store) {
-      return res.status(404).json({ success: false, message: 'Store (Depot) not found' });
+      return res.status(404).json({ success: false, message: 'Không tìm thấy điểm xuất phát (Depot).' });
+    }
+    if (!store.isActive) {
+      return res.status(400).json({
+        success: false,
+        message: `Điểm xuất phát "${store.name}" hiện đang ngừng hoạt động.`,
+      });
     }
 
     // 2. Tìm danh sách đơn hàng được chọn ở trạng thái PACKED
@@ -80,6 +92,29 @@ export const optimizeAndCreateTrip = async (req: Request, res: Response) => {
       return res.status(400).json({
         success: false,
         message: 'Không có đơn hàng PACKED nào hợp lệ trong danh sách đã chọn!',
+      });
+    }
+
+    // 2b. Kiểm tra bán kính giao hàng tối đa 5km từ điểm xuất phát
+    const outOfRange = orders
+      .map((order) => {
+        const check = checkDeliveryRadius(
+          store.latitude,
+          store.longitude,
+          order.latitude,
+          order.longitude
+        );
+        return { order, ...check };
+      })
+      .filter((item) => !item.ok);
+
+    if (outOfRange.length > 0) {
+      const details = outOfRange
+        .map((item) => `${item.order.orderCode} (${item.distanceKm.toFixed(2)} km)`)
+        .join(', ');
+      return res.status(400).json({
+        success: false,
+        message: `Có ${outOfRange.length} đơn hàng vượt quá bán kính tối đa ${MAX_DELIVERY_DISTANCE_KM} km từ "${store.name}": ${details}.`,
       });
     }
 

@@ -5,9 +5,11 @@ import authRoutes from './routes/auth.routes';
 import driverRoutes from './routes/driver.routes';
 import orderRoutes from './routes/order.routes';
 import productRoutes from './routes/product.routes';
+import storeRoutes from './routes/store.routes';
 import tripRoutes from './routes/trip.routes';
 import prisma from './lib/prisma';
 import { runSeed, seedDrivers, seedProducts } from './lib/seeder';
+import { ensureStoreDefaults } from './controllers/store.controller';
 
 dotenv.config();
 
@@ -29,6 +31,7 @@ app.use('/api', authRoutes);
 app.use('/api/drivers', driverRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/products', productRoutes);
+app.use('/api/stores', storeRoutes);
 app.use('/api/trips', tripRoutes);
 
 async function bootstrap() {
@@ -39,6 +42,7 @@ async function bootstrap() {
       await runSeed(prisma, false);
       console.log('Initial DMS seed completed!');
     } else {
+      await ensureStoreDefaults(prisma);
       const productCount = await prisma.product.count();
       if (productCount === 0) {
         console.log('Empty product catalog detected. Seeding sample products...');

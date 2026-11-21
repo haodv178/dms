@@ -66,7 +66,9 @@ export const getMe = async (req: Request, res: Response) => {
 export const getSystemOverview = async (_req: Request, res: Response) => {
   try {
     const [stores, users] = await Promise.all([
-      prisma.store.findMany({ orderBy: { id: 'asc' } }),
+      prisma.store.findMany({
+        orderBy: [{ isDefault: 'desc' }, { isActive: 'desc' }, { id: 'asc' }],
+      }),
       prisma.user.findMany({
         select: { id: true, email: true, name: true, role: true },
         orderBy: { id: 'asc' },

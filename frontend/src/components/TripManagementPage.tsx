@@ -11,6 +11,7 @@ import {
   Trash2,
   Truck,
   UserCog,
+  Warehouse,
   XCircle,
 } from 'lucide-react';
 import { Badge } from '@astryxdesign/core/Badge';
@@ -47,13 +48,18 @@ import {
 interface TripManagementPageProps {
   role: Role;
   depot: Store;
+  stores: Store[];
   trips: Trip[];
   packedOrders: Order[];
   availableDrivers: Driver[];
   assignableDrivers: Driver[];
   isDarkMode: boolean;
   optimizing: boolean;
-  onCreateTrip: (orderIds: number[], driverId: number | null) => Promise<Trip | null>;
+  onCreateTrip: (
+    storeId: number,
+    orderIds: number[],
+    driverId: number | null
+  ) => Promise<Trip | null>;
   onStartTrip: (tripId: number) => Promise<void>;
   onReassignTripDriver: (tripId: number, driverId: number) => Promise<void>;
   onReoptimizeTrip: (tripId: number) => Promise<void>;
@@ -75,6 +81,7 @@ function getTripStatusMeta(status: string) {
 export function TripManagementPage({
   role,
   depot,
+  stores,
   trips,
   packedOrders,
   availableDrivers,
@@ -180,8 +187,12 @@ export function TripManagementPage({
   const canStart = canRoleStartTrip(role);
   const canUpdateStop = canRoleUpdateStopDelivery(role);
 
-  const handleCreateTripSubmit = async (orderIds: number[], driverId: number | null) => {
-    const created = await onCreateTrip(orderIds, driverId);
+  const handleCreateTripSubmit = async (
+    storeId: number,
+    orderIds: number[],
+    driverId: number | null
+  ) => {
+    const created = await onCreateTrip(storeId, orderIds, driverId);
     if (created) {
       setShowCreateModal(false);
       setStatusFilter('ALL');
@@ -426,6 +437,15 @@ export function TripManagementPage({
                         </div>
                       </div>
 
+                      {trip.store?.name && (
+                        <div className="flex items-center gap-1.5 text-secondary">
+                          <Warehouse className="w-3.5 h-3.5 shrink-0" />
+                          <Text type="supporting" size="2xs" maxLines={1}>
+                            Xuất phát: {trip.store.name}
+                          </Text>
+                        </div>
+                      )}
+
                       <div className="flex items-center justify-between gap-2 pt-1 border-t border-border/60">
                         <Text type="supporting" size="2xs" hasTabularNumbers>
                           Tiến độ: {doneCount}/{tripOrders.length} điểm giao
@@ -481,6 +501,12 @@ export function TripManagementPage({
                         variant={getTripStatusMeta(selectedTrip.status).badgeVariant}
                       />
                     </div>
+                    <Text type="supporting" size="xsm">
+                      Điểm xuất phát:{' '}
+                      <Text type="label" size="xsm" color="primary">
+                        {selectedTrip.store?.name || depot.name}
+                      </Text>
+                    </Text>
                     <Text type="supporting" size="xsm">
                       Tài xế:{' '}
                       <Text type="label" size="xsm" color="primary">
@@ -645,6 +671,8 @@ export function TripManagementPage({
         onOpenChange={setShowCreateModal}
         packedOrders={packedOrders}
         availableDrivers={availableDrivers}
+        stores={stores}
+        defaultDepot={depot}
         submitting={optimizing}
         onCreateTrip={handleCreateTripSubmit}
       />

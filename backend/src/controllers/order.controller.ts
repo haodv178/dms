@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { DriverStatus, OrderStatus, Prisma, Role } from '@prisma/client';
 import prisma from '../lib/prisma';
+import { checkDeliveryRadius, MAX_DELIVERY_DISTANCE_KM } from '../lib/geo';
 
 const EDITABLE_ORDER_STATUSES: OrderStatus[] = [
   OrderStatus.NEW,
@@ -186,7 +187,7 @@ export const createOrder = async (req: Request, res: Response) => {
   try {
     const {
       orderCode,
-      storeId = 1,
+      storeId,
       customerName,
       customerPhone,
       customerAddress,
@@ -199,6 +200,59 @@ export const createOrder = async (req: Request, res: Response) => {
       return res.status(400).json({
         success: false,
         message: 'Vui lòng nhập đầy đủ tên khách hàng, địa chỉ và tọa độ GPS (latitude, longitude).',
+      });
+    }
+
+    const parsedLat = Number(latitude);
+    const parsedLng = Number(longitude);
+    if (
+      !Number.isFinite(parsedLat) ||
+      !Number.isFinite(parsedLng) ||
+      parsedLat < -90 ||
+      parsedLat > 90 ||
+      parsedLng < -180 ||
+      parsedLng > 180
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: 'Tọa độ GPS (latitude, longitude) không hợp lệ.',
+      });
+    }
+
+    // Resolve target departure point (Store)
+    const targetStore = storeId
+      ? await prisma.store.findUnique({ where: { id: Number(storeId) } })
+      : await prisma.store.findFirst({
+          where: { isActive: true },
+          orderBy: [{ isDefault: 'desc' }, { id: 'asc' }],
+        });
+
+    if (!targetStore) {
+      return res.status(404).json({
+        success: false,
+        message: 'Không tìm thấy điểm xuất phát được chọn.',
+      });
+    }
+
+    if (!targetStore.isActive) {
+      return res.status(400).json({
+        success: false,
+        message: `Điểm xuất phát "${targetStore.name}" hiện đang ngừng hoạt động.`,
+      });
+    }
+
+    const radiusCheck = checkDeliveryRadius(
+      targetStore.latitude,
+      targetStore.longitude,
+      parsedLat,
+      parsedLng
+    );
+    if (!radiusCheck.ok) {
+      return res.status(400).json({
+        success: false,
+        message: `Điểm giao hàng cách điểm xuất phát "${targetStore.name}" ${radiusCheck.distanceKm.toFixed(
+          2
+        )} km, vượt quá bán kính giao hàng tối đa ${MAX_DELIVERY_DISTANCE_KM} km!`,
       });
     }
 
@@ -218,19 +272,19 @@ export const createOrder = async (req: Request, res: Response) => {
     const newOrder = await prisma.order.create({
       data: {
         orderCode: orderCode || `ORD-${Math.floor(100 + Math.random() * 900)}-${Date.now().toString().slice(-3)}`,
-        storeId: Number(storeId),
+        storeId: targetStore.id,
         customerName: String(customerName).trim(),
         customerPhone: (customerPhone || '0900000000').trim(),
         customerAddress: String(customerAddress).trim(),
-        latitude: Number(latitude),
-        longitude: Number(longitude),
+        latitude: parsedLat,
+        longitude: parsedLng,
         totalAmount: computedTotal,
         status: OrderStatus.NEW,
         items: {
           create: normalizedItems,
         },
       },
-      include: { items: true, store: true, trip: true },
+      include: ORDER_WITH_RELATIONS_INCLUDE,
     });
 
     res.status(201).json({
@@ -267,6 +321,7 @@ export const updateOrder = async (req: Request, res: Response) => {
     }
 
     const {
+      storeId,
       customerName,
       customerPhone,
       customerAddress,
@@ -304,6 +359,36 @@ export const updateOrder = async (req: Request, res: Response) => {
       });
     }
 
+    const targetStoreId = storeId ? Number(storeId) : existingOrder.storeId;
+    const targetStore = await prisma.store.findUnique({ where: { id: targetStoreId } });
+    if (!targetStore) {
+      return res.status(404).json({
+        success: false,
+        message: 'Không tìm thấy điểm xuất phát được chọn.',
+      });
+    }
+    if (targetStoreId !== existingOrder.storeId && !targetStore.isActive) {
+      return res.status(400).json({
+        success: false,
+        message: `Điểm xuất phát "${targetStore.name}" hiện đang ngừng hoạt động.`,
+      });
+    }
+
+    const radiusCheck = checkDeliveryRadius(
+      targetStore.latitude,
+      targetStore.longitude,
+      parsedLat,
+      parsedLng
+    );
+    if (!radiusCheck.ok) {
+      return res.status(400).json({
+        success: false,
+        message: `Điểm giao hàng cách điểm xuất phát "${targetStore.name}" ${radiusCheck.distanceKm.toFixed(
+          2
+        )} km, vượt quá bán kính giao hàng tối đa ${MAX_DELIVERY_DISTANCE_KM} km!`,
+      });
+    }
+
     const { items: normalizedItems, error: itemsError } = await resolveAndValidateItems(
       items,
       true
@@ -320,6 +405,7 @@ export const updateOrder = async (req: Request, res: Response) => {
     const updatedOrder = await prisma.order.update({
       where: { id },
       data: {
+        storeId: targetStore.id,
         customerName: trimmedName,
         customerPhone: trimmedPhone || existingOrder.customerPhone,
         customerAddress: trimmedAddress,

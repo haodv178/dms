@@ -123,20 +123,30 @@ export async function seedProducts(prisma: PrismaClient) {
 
 export async function runSeed(prisma: PrismaClient, resetOrders = true) {
   // 1. Tạo Store (Depot - Lotte Mart Quận 7, TP.HCM)
+  const existingDefault = await prisma.store.findFirst({ where: { isDefault: true } });
   const store = await prisma.store.upsert({
     where: { id: 1 },
     update: {
+      code: 'DEP-001',
       name: 'Lotte Mart Quận 7 (Depot)',
       address: '469 Nguyễn Hữu Thọ, Tân Hưng, Quận 7, TP.HCM',
       latitude: 10.7423,
       longitude: 106.7024,
+      phone: '02837753232',
+      isActive: true,
+      ...(existingDefault && existingDefault.id !== 1 ? {} : { isDefault: true }),
     },
     create: {
       id: 1,
+      code: 'DEP-001',
       name: 'Lotte Mart Quận 7 (Depot)',
       address: '469 Nguyễn Hữu Thọ, Tân Hưng, Quận 7, TP.HCM',
       latitude: 10.7423,
       longitude: 106.7024,
+      phone: '02837753232',
+      isDefault: !existingDefault,
+      isActive: true,
+      notes: 'Kho trung tâm khu vực Quận 7 & Nam Sài Gòn',
     },
   });
 

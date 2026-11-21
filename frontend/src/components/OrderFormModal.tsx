@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
-import { MapContainer, Marker, TileLayer, useMap, useMapEvents } from 'react-leaflet';
+import { Circle, MapContainer, Marker, TileLayer, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
-import { MapPin, Plus, Search, Trash2 } from 'lucide-react';
+import { AlertTriangle, MapPin, Plus, Search, Trash2, Warehouse } from 'lucide-react';
 import { Badge } from '@astryxdesign/core/Badge';
 import { Button } from '@astryxdesign/core/Button';
 import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog';
 import { IconButton } from '@astryxdesign/core/IconButton';
 import { Layout, LayoutContent, LayoutFooter } from '@astryxdesign/core/Layout';
+import { Selector } from '@astryxdesign/core/Selector';
 import {
   Table,
   TableBody,
@@ -19,9 +20,11 @@ import { Text } from '@astryxdesign/core/Text';
 import { TextInput } from '@astryxdesign/core/TextInput';
 import { fetchProducts } from '../api/dmsApi';
 import {
+  MAX_DELIVERY_DISTANCE_KM,
   STATUS_CONFIG,
   computeOrderFormTotal,
   formatVND,
+  haversineDistanceKm,
   type Order,
   type OrderFormState,
   type Product,
@@ -37,6 +40,7 @@ interface OrderFormModalProps {
   onFormChange: (next: OrderFormState) => void;
   products: Product[];
   depot: Store;
+  stores: Store[];
   isDarkMode: boolean;
   submitting: boolean;
   onSubmit: (e: FormEvent) => void;
@@ -117,6 +121,7 @@ export function OrderFormModal({
   onFormChange,
   products,
   depot,
+  stores,
   isDarkMode,
   submitting,
   onSubmit,
@@ -124,6 +129,33 @@ export function OrderFormModal({
   const isEdit = mode === 'edit';
   const pinIcon = useMemo(() => createPinIcon(), []);
   const depotIcon = useMemo(() => createDepotMiniIcon(), []);
+
+  const selectableStores = useMemo(() => {
+    const active = stores.filter((s) => s.isActive !== false);
+    const list = active.length > 0 ? [...active] : [depot];
+    if (isEdit && editingOrder?.store && !list.some((s) => s.id === editingOrder.storeId)) {
+      list.push(editingOrder.store);
+    }
+    return list;
+  }, [stores, depot, isEdit, editingOrder]);
+
+  const selectedStore = useMemo(() => {
+    const id = Number(form.storeId);
+    if (Number.isInteger(id) && id > 0) {
+      const found = selectableStores.find((s) => s.id === id);
+      if (found) return found;
+    }
+    return selectableStores.find((s) => s.isDefault) ?? depot;
+  }, [form.storeId, selectableStores, depot]);
+
+  const storeOptions = useMemo(
+    () =>
+      selectableStores.map((s) => ({
+        value: String(s.id),
+        label: `${s.name}${s.isDefault ? ' (Mặc định)' : ''}${s.isActive === false ? ' [Ngừng HĐ]' : ''}`,
+      })),
+    [selectableStores]
+  );
 
   const [catalogSearch, setCatalogSearch] = useState('');
   const [catalogResults, setCatalogResults] = useState<Product[]>(products);
@@ -187,7 +219,19 @@ export function OrderFormModal({
 
   const markerPosition: [number, number] = hasValidCoords
     ? [parsedLat, parsedLng]
-    : [depot.latitude, depot.longitude];
+    : [selectedStore.latitude, selectedStore.longitude];
+
+  const distanceKm = useMemo(() => {
+    if (!hasValidCoords) return null;
+    return haversineDistanceKm(
+      selectedStore.latitude,
+      selectedStore.longitude,
+      parsedLat,
+      parsedLng
+    );
+  }, [hasValidCoords, selectedStore.latitude, selectedStore.longitude, parsedLat, parsedLng]);
+
+  const isOutOfRange = distanceKm !== null && distanceKm > MAX_DELIVERY_DISTANCE_KM;
 
   const computedTotal = useMemo(
     () => computeOrderFormTotal(form.items),
@@ -291,6 +335,52 @@ export function OrderFormModal({
                 </div>
               )}
 
+              {/* Departure Point Selection */}
+              <div className="p-3 rounded-xl border border-border bg-muted/40 flex flex-col gap-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5">
+                    <Warehouse className="w-4 h-4 text-accent" />
+                    <Text type="label" size="sm">
+                      Điểm xuất phát (Kho / Depot)
+                    </Text>
+                  </div>
+                  {distanceKm !== null && (
+                    <Badge
+                      label={
+                        isOutOfRange
+                          ? `Cách kho ${distanceKm.toFixed(2)} km (Vượt quá ${MAX_DELIVERY_DISTANCE_KM} km!)`
+                          : `Cách kho ${distanceKm.toFixed(2)} km / tối đa ${MAX_DELIVERY_DISTANCE_KM} km`
+                      }
+                      variant={isOutOfRange ? 'error' : 'green'}
+                    />
+                  )}
+                </div>
+
+                <Selector
+                  label="Chọn điểm xuất phát"
+                  isLabelHidden
+                  variant="secondary"
+                  size="sm"
+                  width="100%"
+                  startIcon={<Warehouse className="w-3.5 h-3.5" />}
+                  options={storeOptions}
+                  value={String(selectedStore.id)}
+                  onChange={(val) => onFormChange({ ...form, storeId: String(val) })}
+                />
+
+                {isOutOfRange && (
+                  <div className="flex items-start gap-2 p-2.5 rounded-lg bg-red-500/10 border border-red-500/30 text-red-600 dark:text-red-400">
+                    <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                    <Text type="supporting" size="2xs">
+                      Điểm giao hàng đang cách &quot;{selectedStore.name}&quot;{' '}
+                      <strong>{distanceKm?.toFixed(2)} km</strong>, vượt quá giới hạn cho phép{' '}
+                      <strong>{MAX_DELIVERY_DISTANCE_KM} km</strong>. Vui lòng chọn điểm xuất phát
+                      gần hơn hoặc điều chỉnh tọa độ giao hàng nằm trong vòng tròn đỏ.
+                    </Text>
+                  </div>
+                )}
+              </div>
+
               {/* Customer Info */}
               <div className="space-y-3">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -374,8 +464,19 @@ export function OrderFormModal({
                           position={markerPosition}
                           onPick={handleMapPick}
                         />
+                        <Circle
+                          center={[selectedStore.latitude, selectedStore.longitude]}
+                          radius={MAX_DELIVERY_DISTANCE_KM * 1000}
+                          pathOptions={{
+                            color: isOutOfRange ? '#e11d48' : '#2563eb',
+                            fillColor: isOutOfRange ? '#e11d48' : '#3b82f6',
+                            fillOpacity: 0.08,
+                            weight: 1.5,
+                            dashArray: '6 4',
+                          }}
+                        />
                         <Marker
-                          position={[depot.latitude, depot.longitude]}
+                          position={[selectedStore.latitude, selectedStore.longitude]}
                           icon={depotIcon}
                           interactive={false}
                         />
@@ -567,6 +668,7 @@ export function OrderFormModal({
                 variant="primary"
                 size="sm"
                 isLoading={submitting}
+                isDisabled={isOutOfRange}
               />
             </div>
           </LayoutFooter>
