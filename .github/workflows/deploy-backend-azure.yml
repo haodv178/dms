@@ -99,9 +99,13 @@ jobs:
 
       - name: Ensure Resource Group exists
         run: |
-          az group create \
-            --name "${AZURE_RESOURCE_GROUP}" \
-            --location "${AZURE_LOCATION}"
+          if [ "$(az group exists --name "${AZURE_RESOURCE_GROUP}")" != "true" ]; then
+            az group create \
+              --name "${AZURE_RESOURCE_GROUP}" \
+              --location "${AZURE_LOCATION}"
+          else
+            echo "Resource group ${AZURE_RESOURCE_GROUP} already exists."
+          fi
 
       - name: Deploy Bicep infrastructure & Container Apps
         id: deploy

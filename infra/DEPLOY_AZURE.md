@@ -111,6 +111,14 @@ In your frontend host (Azure Static Web Apps, Vercel, Netlify, etc.):
 
 ## Troubleshooting
 
+- **`AADSTS700213: No matching federated identity record found for presented assertion subject`**:
+  GitHub Actions OIDC may include numeric owner/repo IDs in the `sub` claim (e.g., `repo:haodv178@37466262/dms@1465110630:ref:refs/heads/main`). Update the federated credential in Azure Cloud Shell to match the exact `subject claim` printed in the GitHub Actions log:
+  ```bash
+  APP_ID=$(az ad app list --display-name "dms-github-deploy" --query "[0].appId" -o tsv)
+  az ad app federated-credential update --id "$APP_ID" --federated-credential-id "github-main" --parameters '{
+    "subject": "repo:haodv178@37466262/dms@1465110630:ref:refs/heads/main"
+  }'
+  ```
 - **PostgreSQL quota / capacity error in `southeastasia` (common on Azure for Students)**:
   Set the `AZURE_LOCATION` GitHub variable (or `workflow_dispatch` input) to `eastasia`, `japaneast`, or `eastus`, and re-run.
 - **Inspect backend logs in Azure Cloud Shell**:
