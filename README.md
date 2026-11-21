@@ -87,20 +87,23 @@ doan/
 │   ├── package.json
 │   ├── tsconfig.json
 │   ├── prisma/
-│   │   ├── schema.prisma        # Định nghĩa 5 bảng dữ liệu PostgreSQL
-│   │   └── seed.ts              # Script nạp dữ liệu mẫu qua CLI
+│   │   ├── schema.prisma        # Định nghĩa 6 bảng dữ liệu PostgreSQL (gồm Product)
+│   │   ├── seed.ts              # Script nạp dữ liệu mẫu qua CLI
+│   │   └── seed-1000-products.ts # Script sinh 1.000 sản phẩm mẫu vào danh mục kho
 │   └── src/
-│       ├── index.ts             # Entrypoint Express & tự động seed khi DB trống
+│       ├── index.ts             # Entrypoint Express & tự động seed khi DB/sản phẩm trống
 │       ├── lib/
 │       │   ├── prisma.ts        # Khởi tạo Prisma Client
-│       │   └── seeder.ts        # Logic tạo 1 Kho (Depot), 3 Users và 10 Đơn hàng mẫu
+│       │   └── seeder.ts        # Logic tạo 1 Kho (Depot), 3 Users, 16 Sản phẩm & 10 Đơn hàng mẫu
 │       ├── controllers/
-│       │   ├── auth.controller.ts   # Login, Me, System Overview, Seed API
-│       │   ├── order.controller.ts  # Quản lý đơn hàng & chuyển trạng thái Kho/Tài xế
-│       │   └── trip.controller.ts   # Gọi Python OR-Tools Solver & tạo chuyến xe (Trip)
+│       │   ├── auth.controller.ts    # Login, Me, System Overview, Seed API
+│       │   ├── order.controller.ts   # Tạo/sửa đơn hàng (chọn từ danh mục) & chuyển trạng thái
+│       │   ├── product.controller.ts # CRUD sản phẩm, thống kê KPI & phân trang phía server
+│       │   └── trip.controller.ts    # Gọi Python OR-Tools Solver & tạo chuyến xe (Trip)
 │       └── routes/
 │           ├── auth.routes.ts
 │           ├── order.routes.ts
+│           ├── product.routes.ts
 │           └── trip.routes.ts
 ├── python-solver/               # Micro-service giải bài toán VRP với Google OR-Tools (:8090)
 │   ├── Dockerfile               # Docker image cho Python Solver
@@ -117,17 +120,19 @@ doan/
         ├── main.tsx             # Entrypoint (nạp index.css trước để giữ đúng @layer cascade)
         ├── index.css            # Astryx @layer cascade + Tailwind v4 bridge + Leaflet popup styles
         ├── astryx-themes.ts     # Module theme do `astryx theme add neutral` sinh tự động
-        ├── App.tsx              # Root <Theme>, <LayerProvider>, state điều phối & Toast
+        ├── App.tsx              # Root <Theme>, <LayerProvider>, điều hướng trang & Toast
         ├── types/
-        │   └── dms.ts           # Domain types, metadata vai trò/trạng thái & format tiền tệ
+        │   └── dms.ts           # Domain types (Order, Product, Pagination), metadata & format tiền tệ
         ├── api/
-        │   └── dmsApi.ts        # Axios client gọi REST API Backend
+        │   └── dmsApi.ts        # Axios client gọi REST API Backend (Orders, Trips, Products)
         └── components/
-            ├── Header.tsx           # Top Bar: Role Selector, Light/System/Dark toggle, Seed/New
-            ├── OrderTable.tsx       # Action banner OR-Tools, TabList lọc trạng thái & bảng đơn
-            ├── RouteMap.tsx         # Bản đồ Leaflet OSM / CARTO Dark Matter theo theme
-            ├── ActiveTripPanel.tsx  # Chi tiết chuyến xe & danh sách điểm dừng tối ưu
-            └── NewOrderModal.tsx    # Hộp thoại Astryx Dialog tạo đơn hàng mới
+            ├── Header.tsx                # Top Bar: Chuyển trang Đơn hàng/Sản phẩm, Role, Theme, Seed/New
+            ├── OrderTable.tsx            # Action banner OR-Tools, TabList lọc trạng thái & bảng đơn (kèm nút Sửa)
+            ├── OrderFormModal.tsx        # Hộp thoại Tạo/Sửa đơn hàng: Mini-map Leaflet + chọn sản phẩm danh mục
+            ├── RouteMap.tsx              # Bản đồ Leaflet OSM / CARTO Dark Matter theo theme
+            ├── ActiveTripPanel.tsx       # Chi tiết chuyến xe & danh sách điểm dừng tối ưu
+            ├── ProductManagementPage.tsx # Trang Quản lý Sản phẩm: KPI, tìm kiếm, lọc danh mục & phân trang server
+            └── ProductFormModal.tsx      # Hộp thoại Astryx Dialog thêm/sửa sản phẩm trong kho
 ```
 
 ---
@@ -234,6 +239,8 @@ model OrderItem {
   id          Int     @id @default(autoincrement())
   orderId     Int
   order       Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId   Int?
+  sku         String?
   productName String
   quantity    Int
   price       Decimal @db.Decimal(10, 2)
@@ -250,6 +257,19 @@ model Trip {
   status        String   @default("ASSIGNED") // ASSIGNED | IN_TRANSIT | COMPLETED
   totalDistance Float?   // Tổng quãng đường tối ưu (mét)
   createdAt     DateTime @default(now())
+}
+
+model Product {
+  id        Int      @id @default(autoincrement())
+  sku       String   @unique
+  name      String
+  category  String   @default("Thực phẩm")
+  unit      String   @default("Cái")
+  price     Decimal  @db.Decimal(10, 2)
+  stock     Int      @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 ```
 
@@ -275,9 +295,17 @@ model Trip {
 #### Quản lý Đơn hàng
 - `GET /api/orders`: Danh sách đơn hàng (hỗ trợ lọc `?status=NEW|PICKING|PACKED|DELIVERING|COMPLETED|FAILED`).
 - `GET /api/orders/:id`: Xem chi tiết đơn hàng và danh sách sản phẩm (`items`).
-- `POST /api/orders`: Tạo đơn hàng mới thủ công.
+- `POST /api/orders`: Tạo đơn hàng mới. Sản phẩm trong đơn phải được chọn từ danh mục `Product`; backend tự tra cứu `productName`, `sku`, `price` từ danh mục và tự tính `totalAmount`.
+- `PUT /api/orders/:id`: Chỉnh sửa đơn hàng (chỉ cho phép ở các trạng thái trước điều phối: `NEW`, `PICKING`, `PACKED`; trả về `400` nếu đơn đã `DELIVERING`, `COMPLETED` hoặc `FAILED`). Cập nhật thông tin khách hàng, tọa độ GPS và danh sách `OrderItem` (giữ nguyên `status`, tự tính lại `totalAmount`).
 - `PATCH /api/orders/:id/start-picking`: Chuyển trạng thái đơn từ `NEW` ➔ `PICKING`.
 - `PATCH /api/orders/:id/complete-packing`: Chuyển trạng thái đơn từ `PICKING` ➔ `PACKED`.
+
+#### Quản lý Sản phẩm (Product Catalog & Server-Side Pagination)
+- `GET /api/products`: Danh sách sản phẩm hỗ trợ phân trang phía server (`?page=1&limit=20`, giới hạn `1–100`), tìm kiếm theo tên/SKU/danh mục (`?search=`), lọc danh mục (`?category=`), và lọc sản phẩm đang bán (`?activeOnly=true`). Trả về `data`, `pagination` (`page`, `limit`, `total`, `totalPages`) và `summary` (`totalProducts`, `activeProducts`, `lowStockProducts`, `totalStock`).
+- `GET /api/products/:id`: Xem chi tiết một sản phẩm.
+- `POST /api/products`: Tạo sản phẩm mới (tự sinh mã `SKU-...` nếu bỏ trống, kiểm tra trùng SKU với mã lỗi `409`).
+- `PUT /api/products/:id`: Cập nhật thông tin sản phẩm (SKU, tên, danh mục, đơn vị tính, giá bán, tồn kho, trạng thái kinh doanh `isActive`).
+- `DELETE /api/products/:id`: Xóa sản phẩm khỏi danh mục.
 
 #### Điều phối & Tối ưu Lộ trình (OR-Tools Integration)
 - `POST /api/trips/optimize`:
@@ -340,21 +368,32 @@ model Trip {
 Giao diện đơn trang (SPA) tại `http://localhost:5173` được xây dựng bằng **Meta Astryx Design System** (`@astryxdesign/core`, `@astryxdesign/theme-neutral`) kết hợp **Tailwind CSS v4** (qua Astryx Tailwind Bridge `@astryxdesign/core/tailwind-theme.css` và thứ tự `@layer` chuẩn), hỗ trợ đầy đủ **Light / System / Dark mode** và chia làm 3 khu vực trực quan:
 
 1. **Thanh Công Cụ Trên Cùng (Top Bar — `Header.tsx`):**
+   - **Page Switcher (`SegmentedControl`):** Chuyển đổi nhanh giữa 2 trang quản lý chính — **Đơn hàng** (`#orders`) và **Sản phẩm** (`#products`), hiển thị tổng số lượng tương ứng.
    - **Role Switcher (`Selector`):** Chuyển đổi tức thì giữa 3 vai trò (`Quản lý / Điều phối - ADMIN`, `Nhân viên Kho - WAREHOUSE`, `Tài xế Giao hàng - DRIVER`) mà không cần đăng xuất/đăng nhập lại.
    - **Theme Mode Switcher (`SegmentedControl`):** Chuyển đổi chế độ giao diện **Sáng / Hệ thống / Tối** (lưu trong `localStorage`), tự động đồng bộ toàn bộ token màu Astryx và lớp bản đồ Leaflet.
-   - **Tạo đơn mới (`Button` + `Dialog`):** Mở hộp thoại thêm đơn hàng mới kèm tọa độ GPS (`NewOrderModal.tsx`).
+   - **Tạo đơn mới (`Button` + `Dialog`):** Mở hộp thoại thống nhất cho cả Tạo và Sửa đơn hàng (`OrderFormModal.tsx`).
    - **Seed 10 Sample Orders (`Button`):** Khôi phục/nạp nhanh 10 đơn hàng mẫu ở trạng thái `NEW` để bắt đầu buổi thuyết trình.
-2. **Bảng Điều Phối & Quản Lý Vòng Đời Đơn Hàng (Bên trái — `OrderTable.tsx`):**
+2. **Bảng Điều Phối, Tạo & Chỉnh Sửa Đơn Hàng (`OrderTable.tsx` & `OrderFormModal.tsx`):**
    - Các tab lọc đơn hàng theo trạng thái (`TabList` / `Tab`) kèm số lượng thực tế và chọn tất cả đơn `PACKED` (`CheckboxInput` hỗ trợ trạng thái `indeterminate`).
    - Nút tiện ích **"Đóng gói nhanh"** giúp chuyển nhanh các đơn `NEW`/`PICKING` sang `PACKED` khi muốn demo ngay thuật toán OR-Tools.
    - Nút điểm nhấn **"Tối ưu hóa lộ trình với Google OR-Tools"** khi chọn các đơn `PACKED`.
-   - Bảng đơn hàng (`Table`, `Badge`, `Button`, `IconButton`) với các nút thao tác trực tiếp trên từng dòng (`Bắt đầu nhặt hàng`, `Đóng gói xong`, `Giao thành công`, `Giao thất bại`) và thông báo phản hồi qua Astryx `useToast()`.
+   - Bảng đơn hàng (`Table`, `Badge`, `Button`, `IconButton`) với nút **Chỉnh sửa đơn hàng** (hiện cho `ADMIN` và `WAREHOUSE` với các đơn ở trạng thái `NEW`, `PICKING`, `PACKED`; ẩn với `DRIVER`) cùng các nút chuyển trạng thái và thông báo `useToast()`.
+   - **Hộp thoại Tạo/Sửa Đơn Hàng (`OrderFormModal.tsx`):**
+     - Sử dụng cấu trúc Astryx `Dialog` + `Layout` (`LayoutContent` / `LayoutFooter`) để nút Lưu/Hủy luôn cố định ở chân hộp thoại.
+     - **Bản đồ mini Leaflet tương tác:** Click lên bản đồ hoặc kéo ghim xanh để chọn tọa độ giao hàng, đồng bộ 2 chiều với ô nhập `Latitude` / `Longitude`.
+     - **Chọn sản phẩm bắt buộc từ danh mục:** Ô tìm kiếm theo tên hoặc mã SKU gọi trực tiếp API danh mục sản phẩm đang kinh doanh; bấm **Thêm** để đưa vào đơn (tự tăng `Qty` nếu đã có).
+     - **Bảng Order Item 4 cột:** `Tên sản phẩm`, `SKU`, `Giá` (chỉ đọc) và `Qty` (cột duy nhất cho phép sửa, kèm nút xóa dòng và tổng tiền tự tính).
 3. **Bản Đồ Lộ Trình Leaflet & Chi Tiết Chuyến Xe (Bên phải — `RouteMap.tsx` & `ActiveTripPanel.tsx`):**
    - Tự động chuyển đổi tile bản đồ giữa **OpenStreetMap** (chế độ sáng) và **CARTO Dark Matter** (chế độ tối).
    - Hiển thị Marker **Kho xuất phát (Depot)** màu đỏ (`🏪`).
    - Hiển thị các điểm giao hàng bằng Marker tròn đánh số thứ tự dừng xe **`1, 2, 3...`** theo kết quả của Google OR-Tools.
    - Vẽ đường nối **Polyline** từ `Depot ➔ Stop #1 ➔ Stop #2 ➔ Stop #3...`.
    - Thẻ thông tin chuyến xe (`Card`) bên dưới bản đồ hiển thị mã chuyến (`TRIP-...`), tên tài xế, tổng quãng đường (`km`/`m`) và danh sách các điểm dừng theo thứ tự.
+4. **Trang Quản Lý Sản Phẩm (`ProductManagementPage.tsx` & `ProductFormModal.tsx`):**
+   - **4 thẻ KPI tổng quan:** Tổng sản phẩm, Đang kinh doanh, Sắp hết hàng (`<= 10`), Tổng số lượng tồn kho (tính toàn kho từ API `summary`).
+   - **Tìm kiếm & Lọc:** Tìm kiếm theo tên/SKU (debounce `250ms`) và lọc theo danh mục sản phẩm.
+   - **Phân trang phía server (`@astryxdesign/core/Pagination`):** Điều hướng theo số trang kèm dấu `...`, nút Trước/Sau và bộ chọn số dòng mỗi trang (`10 / 20 / 50 / 100`).
+   - **Thao tác CRUD:** Thêm sản phẩm, chỉnh sửa (`ProductFormModal.tsx`), bật/tắt trạng thái đang bán và xóa sản phẩm có hộp thoại xác nhận (dành cho `ADMIN` & `WAREHOUSE`; `DRIVER` ở chế độ chỉ xem).
 
 ---
 
@@ -406,6 +445,15 @@ curl -X POST http://localhost:3000/api/trips/optimize \
 
 # 5. Tài xế xác nhận giao hàng thành công
 curl -X PATCH http://localhost:3000/api/orders/1/complete-delivery
+
+# 6. Truy vấn danh sách sản phẩm có phân trang & tìm kiếm
+curl "http://localhost:3000/api/products?page=1&limit=20&search=G%E1%BA%A1o"
+```
+
+#### Nạp nhanh 1.000 sản phẩm mẫu để kiểm thử phân trang:
+```bash
+npm --prefix backend run db:push
+npm --prefix backend run seed:products1000
 ```
 
 ---

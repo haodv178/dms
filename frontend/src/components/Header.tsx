@@ -1,7 +1,9 @@
 import {
   ArrowRight,
+  ClipboardList,
   Monitor,
   Moon,
+  Package,
   Plus,
   RefreshCw,
   Sun,
@@ -14,14 +16,22 @@ import { Heading } from '@astryxdesign/core/Heading';
 import { SegmentedControl, SegmentedControlItem } from '@astryxdesign/core/SegmentedControl';
 import { Selector } from '@astryxdesign/core/Selector';
 import { Text } from '@astryxdesign/core/Text';
-import { ROLE_META, type Role, type ThemeMode } from '../types/dms';
+import {
+  ROLE_META,
+  type ActivePage,
+  type Role,
+  type ThemeMode,
+} from '../types/dms';
 
 interface HeaderProps {
+  activePage: ActivePage;
+  onActivePageChange: (page: ActivePage) => void;
   role: Role;
   onRoleChange: (role: Role) => void;
   themeMode: ThemeMode;
   onThemeModeChange: (mode: ThemeMode) => void;
   counts: Record<string, number>;
+  productsCount: number;
   loading: boolean;
   onOpenNewOrder: () => void;
   onSeedOrders: () => void;
@@ -34,11 +44,14 @@ const ROLE_OPTIONS = [
 ];
 
 export function Header({
+  activePage,
+  onActivePageChange,
   role,
   onRoleChange,
   themeMode,
   onThemeModeChange,
   counts,
+  productsCount,
   loading,
   onOpenNewOrder,
   onSeedOrders,
@@ -66,6 +79,24 @@ export function Header({
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
+          <SegmentedControl
+            label="Chuyển trang quản lý"
+            size="sm"
+            value={activePage}
+            onChange={(val) => onActivePageChange(val as ActivePage)}
+          >
+            <SegmentedControlItem
+              value="orders"
+              label={`Đơn hàng (${counts.ALL ?? 0})`}
+              icon={<ClipboardList className="w-3.5 h-3.5" />}
+            />
+            <SegmentedControlItem
+              value="products"
+              label={`Sản phẩm (${productsCount})`}
+              icon={<Package className="w-3.5 h-3.5" />}
+            />
+          </SegmentedControl>
+
           <Selector
             label="Vai trò (Switch Role)"
             isLabelHidden

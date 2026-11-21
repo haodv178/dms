@@ -4,6 +4,7 @@ import {
   MapPin,
   Navigation,
   Package,
+  Pencil,
   ShoppingBag,
   Sparkles,
   XCircle,
@@ -27,7 +28,9 @@ import { Text } from '@astryxdesign/core/Text';
 import {
   STATUS_CONFIG,
   STATUS_TABS,
+  canRoleEditOrders,
   formatVND,
+  isOrderEditable,
   type Order,
   type Role,
 } from '../types/dms';
@@ -46,6 +49,7 @@ interface OrderTableProps {
   optimizing: boolean;
   onBatchPreparePacked: () => void;
   onOptimizeRoute: () => void;
+  onEditOrder: (order: Order) => void;
   onStartPicking: (id: number) => void;
   onCompletePacking: (id: number) => void;
   onCompleteDelivery: (id: number) => void;
@@ -66,6 +70,7 @@ export function OrderTable({
   optimizing,
   onBatchPreparePacked,
   onOptimizeRoute,
+  onEditOrder,
   onStartPicking,
   onCompletePacking,
   onCompleteDelivery,
@@ -290,6 +295,17 @@ export function OrderTable({
 
                         <TableCell>
                           <div className="inline-flex items-center justify-end gap-1.5 whitespace-nowrap">
+                            {canRoleEditOrders(role) && isOrderEditable(order.status) && (
+                              <IconButton
+                                label={`Chỉnh sửa đơn ${order.orderCode}`}
+                                tooltip="Chỉnh sửa đơn hàng"
+                                variant="secondary"
+                                size="sm"
+                                icon={<Pencil className="w-3.5 h-3.5" />}
+                                onClick={() => onEditOrder(order)}
+                              />
+                            )}
+
                             {order.status === 'NEW' && (
                               <Button
                                 label="Bắt đầu nhặt hàng"

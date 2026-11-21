@@ -66,6 +66,8 @@ model OrderItem {
   id          Int     @id @default(autoincrement())
   orderId     Int
   order       Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId   Int?
+  sku         String?
   productName String
   quantity    Int
   price       Decimal @db.Decimal(10, 2)
@@ -82,4 +84,17 @@ model Trip {
   status        String   @default("ASSIGNED") // ASSIGNED | IN_TRANSIT | COMPLETED
   totalDistance Float?   // Mét hoặc km
   createdAt     DateTime @default(now())
+}
+
+model Product {
+  id        Int      @id @default(autoincrement())
+  sku       String   @unique
+  name      String
+  category  String   @default("Thực phẩm")
+  unit      String   @default("Cái")
+  price     Decimal  @db.Decimal(10, 2)
+  stock     Int      @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }

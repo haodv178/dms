@@ -1,5 +1,16 @@
 import axios from 'axios';
-import type { NewOrderFormState, Order, Store, Trip } from '../types/dms';
+import {
+  computeOrderFormTotal,
+  type Order,
+  type OrderFormState,
+  type PaginatedProductsResponse,
+  type Product,
+  type ProductFormState,
+  type ProductPagination,
+  type ProductSummary,
+  type Store,
+  type Trip,
+} from '../types/dms';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000/api';
 
@@ -52,24 +63,104 @@ export async function optimizeTripRoute(storeId: number, orderIds: number[]): Pr
   return res.data.data as Trip;
 }
 
-export async function createOrder(storeId: number, form: NewOrderFormState): Promise<void> {
-  const amount = parseFloat(form.totalAmount);
-  await axios.post(`${API_BASE}/orders`, {
+function serializeOrderPayload(form: OrderFormState) {
+  const items = form.items.map((item) => ({
+    productId: item.productId ?? undefined,
+    sku: item.sku && item.sku !== '—' ? item.sku.trim() : undefined,
+    productName: item.productName.trim(),
+    quantity: Number(item.quantity),
+    price: Number(item.price),
+  }));
+  return {
+    customerName: form.customerName.trim(),
+    customerPhone: form.customerPhone.trim(),
+    customerAddress: form.customerAddress.trim(),
+    latitude: Number(form.latitude),
+    longitude: Number(form.longitude),
+    totalAmount: computeOrderFormTotal(form.items),
+    items,
+  };
+}
+
+export async function createOrder(storeId: number, form: OrderFormState): Promise<Order> {
+  const res = await axios.post(`${API_BASE}/orders`, {
     storeId,
-    customerName: form.customerName,
-    customerPhone: form.customerPhone,
-    customerAddress: form.customerAddress,
-    latitude: parseFloat(form.latitude),
-    longitude: parseFloat(form.longitude),
-    totalAmount: amount,
-    items: [
-      {
-        productName: form.productName,
-        quantity: 1,
-        price: amount,
-      },
-    ],
+    ...serializeOrderPayload(form),
   });
+  return res.data.data as Order;
+}
+
+export async function updateOrder(orderId: number, form: OrderFormState): Promise<Order> {
+  const res = await axios.put(`${API_BASE}/orders/${orderId}`, serializeOrderPayload(form));
+  return res.data.data as Order;
+}
+
+export interface FetchProductsParams {
+  page?: number;
+  limit?: number;
+  search?: string;
+  category?: string;
+  activeOnly?: boolean;
+}
+
+export async function fetchProducts(
+  params: FetchProductsParams = {}
+): Promise<PaginatedProductsResponse> {
+  const query: Record<string, string | number | boolean> = {};
+  if (params.page !== undefined) query.page = params.page;
+  if (params.limit !== undefined) query.limit = params.limit;
+  if (params.search && params.search.trim()) query.search = params.search.trim();
+  if (params.category && params.category !== 'ALL') query.category = params.category;
+  if (params.activeOnly) query.activeOnly = true;
+
+  const res = await axios.get(`${API_BASE}/products`, { params: query });
+  const items = (res.data?.data as Product[]) || [];
+  const pagination: ProductPagination = res.data?.pagination ?? {
+    page: params.page ?? 1,
+    limit: params.limit ?? items.length,
+    total: items.length,
+    totalPages: 1,
+  };
+  const summary: ProductSummary = res.data?.summary ?? {
+    totalProducts: items.length,
+    activeProducts: items.filter((p) => p.isActive).length,
+    lowStockProducts: items.filter((p) => p.stock <= 10).length,
+    totalStock: items.reduce((sum, p) => sum + p.stock, 0),
+  };
+
+  return { items, pagination, summary };
+}
+
+function serializeProductPayload(form: ProductFormState) {
+  return {
+    sku: form.sku.trim(),
+    name: form.name.trim(),
+    category: form.category.trim(),
+    unit: form.unit.trim() || 'Cái',
+    price: Number(form.price),
+    stock: Number(form.stock),
+    isActive: form.isActive,
+  };
+}
+
+export async function createProduct(form: ProductFormState): Promise<Product> {
+  const res = await axios.post(`${API_BASE}/products`, serializeProductPayload(form));
+  return res.data.data as Product;
+}
+
+export async function updateProduct(
+  productId: number,
+  form: ProductFormState
+): Promise<Product> {
+  const res = await axios.put(
+    `${API_BASE}/products/${productId}`,
+    serializeProductPayload(form)
+  );
+  return res.data.data as Product;
+}
+
+export async function deleteProduct(productId: number): Promise<void> {
+  await axios.delete(`${API_BASE}/products/${productId}`);
 }
 
 export function getErrorMessage(err: unknown): string {

@@ -7,23 +7,38 @@ import {
   completeDeliveryOrder,
   completePackingOrder,
   createOrder,
+  createProduct,
+  deleteProduct,
   failDeliveryOrder,
   fetchDashboardData,
+  fetchProducts,
   getErrorMessage,
   optimizeTripRoute,
   seedSampleOrders,
   startPickingOrder,
+  updateOrder,
+  updateProduct,
 } from './api/dmsApi';
 import { ActiveTripPanel } from './components/ActiveTripPanel';
 import { Header } from './components/Header';
-import { NewOrderModal } from './components/NewOrderModal';
+import { OrderFormModal } from './components/OrderFormModal';
 import { OrderTable } from './components/OrderTable';
+import { ProductFormModal } from './components/ProductFormModal';
+import { ProductManagementPage } from './components/ProductManagementPage';
 import { RouteMap } from './components/RouteMap';
 import {
   DEFAULT_DEPOT,
-  INITIAL_NEW_ORDER_FORM,
-  type NewOrderFormState,
+  INITIAL_ORDER_FORM,
+  INITIAL_PRODUCT_FORM,
+  orderToFormState,
+  productToFormState,
+  type ActivePage,
   type Order,
+  type OrderFormState,
+  type Product,
+  type ProductFormState,
+  type ProductPagination,
+  type ProductSummary,
   type Role,
   type Store,
   type ThemeMode,
@@ -50,21 +65,73 @@ interface DmsDashboardProps {
   isDarkMode: boolean;
 }
 
+function readInitialPage(): ActivePage {
+  if (typeof window !== 'undefined' && window.location.hash === '#products') {
+    return 'products';
+  }
+  return 'orders';
+}
+
 function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboardProps) {
   const showToast = useToast();
 
+  const [activePage, setActivePage] = useState<ActivePage>(readInitialPage);
   const [role, setRole] = useState<Role>('ADMIN');
   const [orders, setOrders] = useState<Order[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [catalogProducts, setCatalogProducts] = useState<Product[]>([]);
+  const [productPagination, setProductPagination] = useState<ProductPagination>({
+    page: 1,
+    limit: 20,
+    total: 0,
+    totalPages: 1,
+  });
+  const [productSummary, setProductSummary] = useState<ProductSummary>({
+    totalProducts: 0,
+    activeProducts: 0,
+    lowStockProducts: 0,
+    totalStock: 0,
+  });
+  const [productPage, setProductPage] = useState<number>(1);
+  const [productPageSize, setProductPageSize] = useState<number>(20);
+  const [productSearch, setProductSearch] = useState<string>('');
+  const [debouncedProductSearch, setDebouncedProductSearch] = useState<string>('');
+  const [productCategory, setProductCategory] = useState<string>('ALL');
+  const [loadingProducts, setLoadingProducts] = useState<boolean>(false);
+
   const [depot, setDepot] = useState<Store>(DEFAULT_DEPOT);
   const [activeTrip, setActiveTrip] = useState<Trip | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [selectedOrderIds, setSelectedOrderIds] = useState<number[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [optimizing, setOptimizing] = useState<boolean>(false);
-  const [creatingOrder, setCreatingOrder] = useState<boolean>(false);
-  const [showNewOrderModal, setShowNewOrderModal] = useState<boolean>(false);
-  const [newOrderForm, setNewOrderForm] =
-    useState<NewOrderFormState>(INITIAL_NEW_ORDER_FORM);
+  const [savingOrder, setSavingOrder] = useState<boolean>(false);
+  const [showOrderModal, setShowOrderModal] = useState<boolean>(false);
+  const [orderModalMode, setOrderModalMode] = useState<'create' | 'edit'>('create');
+  const [editingOrder, setEditingOrder] = useState<Order | null>(null);
+  const [orderForm, setOrderForm] = useState<OrderFormState>(INITIAL_ORDER_FORM);
+
+  const [savingProduct, setSavingProduct] = useState<boolean>(false);
+  const [showProductModal, setShowProductModal] = useState<boolean>(false);
+  const [productModalMode, setProductModalMode] = useState<'create' | 'edit'>('create');
+  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [productForm, setProductForm] = useState<ProductFormState>(INITIAL_PRODUCT_FORM);
+
+  const handleActivePageChange = (page: ActivePage) => {
+    setActivePage(page);
+    try {
+      window.location.hash = page === 'products' ? '#products' : '#orders';
+    } catch {
+      // Ignore hash errors
+    }
+  };
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedProductSearch(productSearch);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [productSearch]);
 
   const notify = useCallback(
     (text: string, type: 'info' | 'error' = 'info') => {
@@ -78,10 +145,48 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
     [showToast]
   );
 
+  const loadProductsPage = useCallback(
+    async (
+      page = productPage,
+      limit = productPageSize,
+      search = debouncedProductSearch,
+      category = productCategory
+    ) => {
+      setLoadingProducts(true);
+      try {
+        const res = await fetchProducts({ page, limit, search, category });
+        setProducts(res.items);
+        setProductPagination(res.pagination);
+        setProductSummary(res.summary);
+        if (res.pagination.page !== page) {
+          setProductPage(res.pagination.page);
+        }
+      } catch (err) {
+        notify(`Không thể tải danh sách sản phẩm: ${getErrorMessage(err)}`, 'error');
+      } finally {
+        setLoadingProducts(false);
+      }
+    },
+    [productPage, productPageSize, debouncedProductSearch, productCategory, notify]
+  );
+
+  const loadCatalogProducts = useCallback(async () => {
+    try {
+      const res = await fetchProducts({ activeOnly: true, page: 1, limit: 50 });
+      setCatalogProducts(res.items);
+      setProductSummary(res.summary);
+    } catch {
+      // Ignore secondary catalog fetch error
+    }
+  }, []);
+
   const loadAllData = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await fetchDashboardData();
+      const [data] = await Promise.all([
+        fetchDashboardData(),
+        loadCatalogProducts(),
+      ]);
       setOrders(data.orders);
       if (data.depot) {
         setDepot(data.depot);
@@ -97,11 +202,20 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
     } finally {
       setLoading(false);
     }
-  }, [notify]);
+  }, [notify, loadCatalogProducts]);
 
   useEffect(() => {
     void loadAllData();
   }, [loadAllData]);
+
+  useEffect(() => {
+    void loadProductsPage(
+      productPage,
+      productPageSize,
+      debouncedProductSearch,
+      productCategory
+    );
+  }, [loadProductsPage, productPage, productPageSize, debouncedProductSearch, productCategory]);
 
   const handleSeedOrders = async () => {
     setLoading(true);
@@ -216,24 +330,83 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
     }
   };
 
-  const handleCreateOrder = async (e: FormEvent) => {
+  const handleOpenCreateOrder = () => {
+    setOrderModalMode('create');
+    setEditingOrder(null);
+    setOrderForm(INITIAL_ORDER_FORM);
+    setShowOrderModal(true);
+  };
+
+  const handleOpenEditOrder = (order: Order) => {
+    setOrderModalMode('edit');
+    setEditingOrder(order);
+    setOrderForm(orderToFormState(order, catalogProducts));
+    setShowOrderModal(true);
+  };
+
+  const handleSubmitOrder = async (e: FormEvent) => {
     e.preventDefault();
-    if (!newOrderForm.customerName.trim() || !newOrderForm.customerAddress.trim()) {
+    if (!orderForm.customerName.trim() || !orderForm.customerAddress.trim()) {
       notify('Vui lòng nhập tên khách hàng và địa chỉ giao hàng.', 'error');
       return;
     }
 
-    setCreatingOrder(true);
+    const lat = Number(orderForm.latitude);
+    const lng = Number(orderForm.longitude);
+    if (
+      orderForm.latitude.trim() === '' ||
+      orderForm.longitude.trim() === '' ||
+      !Number.isFinite(lat) ||
+      !Number.isFinite(lng) ||
+      lat < -90 ||
+      lat > 90 ||
+      lng < -180 ||
+      lng > 180
+    ) {
+      notify('Vui lòng nhập tọa độ GPS hợp lệ hoặc chọn vị trí trên bản đồ.', 'error');
+      return;
+    }
+
+    if (orderForm.items.length === 0) {
+      notify('Đơn hàng phải có ít nhất 1 sản phẩm.', 'error');
+      return;
+    }
+
+    for (let i = 0; i < orderForm.items.length; i++) {
+      const item = orderForm.items[i];
+      const qty = Number(item.quantity);
+      const price = Number(item.price);
+      if (!item.productName.trim()) {
+        notify(`Sản phẩm #${i + 1}: Vui lòng nhập tên sản phẩm.`, 'error');
+        return;
+      }
+      if (!Number.isInteger(qty) || qty < 1) {
+        notify(`Sản phẩm "${item.productName}": Số lượng phải là số nguyên >= 1.`, 'error');
+        return;
+      }
+      if (!Number.isFinite(price) || price < 0) {
+        notify(`Sản phẩm "${item.productName}": Đơn giá phải là số hợp lệ >= 0.`, 'error');
+        return;
+      }
+    }
+
+    setSavingOrder(true);
     try {
-      await createOrder(depot.id, newOrderForm);
-      notify('Đã tạo đơn hàng mới thành công!');
-      setShowNewOrderModal(false);
-      setNewOrderForm(INITIAL_NEW_ORDER_FORM);
+      if (orderModalMode === 'edit' && editingOrder) {
+        await updateOrder(editingOrder.id, orderForm);
+        notify(`Đã cập nhật đơn hàng ${editingOrder.orderCode} thành công!`);
+      } else {
+        await createOrder(depot.id, orderForm);
+        notify('Đã tạo đơn hàng mới thành công!');
+      }
+      setShowOrderModal(false);
+      setEditingOrder(null);
+      setOrderForm(INITIAL_ORDER_FORM);
       await loadAllData();
     } catch (err) {
       notify(getErrorMessage(err), 'error');
     } finally {
-      setCreatingOrder(false);
+      setSavingOrder(false);
     }
   };
 
@@ -303,66 +476,213 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
     ];
   }, [depot, orders]);
 
+  const handleOpenCreateProduct = () => {
+    setProductModalMode('create');
+    setEditingProduct(null);
+    setProductForm(INITIAL_PRODUCT_FORM);
+    setShowProductModal(true);
+  };
+
+  const handleOpenEditProduct = (product: Product) => {
+    setProductModalMode('edit');
+    setEditingProduct(product);
+    setProductForm(productToFormState(product));
+    setShowProductModal(true);
+  };
+
+  const handleSubmitProduct = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!productForm.name.trim()) {
+      notify('Vui lòng nhập tên sản phẩm.', 'error');
+      return;
+    }
+
+    const price = Number(productForm.price);
+    const stock = Number(productForm.stock);
+    if (!Number.isFinite(price) || price < 0) {
+      notify('Đơn giá phải là số hợp lệ >= 0.', 'error');
+      return;
+    }
+    if (!Number.isInteger(stock) || stock < 0) {
+      notify('Tồn kho phải là số nguyên >= 0.', 'error');
+      return;
+    }
+
+    setSavingProduct(true);
+    try {
+      if (productModalMode === 'edit' && editingProduct) {
+        await updateProduct(editingProduct.id, productForm);
+        notify(`Đã cập nhật sản phẩm "${productForm.name.trim()}" thành công!`);
+      } else {
+        await createProduct(productForm);
+        notify(`Đã thêm sản phẩm "${productForm.name.trim()}" thành công!`);
+      }
+      setShowProductModal(false);
+      setEditingProduct(null);
+      setProductForm(INITIAL_PRODUCT_FORM);
+      await Promise.all([loadProductsPage(), loadCatalogProducts()]);
+    } catch (err) {
+      notify(getErrorMessage(err), 'error');
+    } finally {
+      setSavingProduct(false);
+    }
+  };
+
+  const handleToggleProductActive = async (product: Product) => {
+    try {
+      const nextForm: ProductFormState = {
+        ...productToFormState(product),
+        isActive: !product.isActive,
+      };
+      await updateProduct(product.id, nextForm);
+      notify(
+        nextForm.isActive
+          ? `Đã mở bán lại "${product.name}".`
+          : `Đã chuyển "${product.name}" sang trạng thái Ngừng bán.`
+      );
+      await Promise.all([loadProductsPage(), loadCatalogProducts()]);
+    } catch (err) {
+      notify(getErrorMessage(err), 'error');
+    }
+  };
+
+  const handleDeleteProduct = async (product: Product) => {
+    try {
+      await deleteProduct(product.id);
+      notify(`Đã xóa sản phẩm "${product.name}" thành công!`);
+      await Promise.all([loadProductsPage(), loadCatalogProducts()]);
+    } catch (err) {
+      notify(getErrorMessage(err), 'error');
+    }
+  };
+
+  const handleProductSearchChange = (value: string) => {
+    setProductSearch(value);
+    setProductPage(1);
+  };
+
+  const handleProductCategoryChange = (value: string) => {
+    setProductCategory(value);
+    setProductPage(1);
+  };
+
+  const handleProductPageSizeChange = (nextSize: number) => {
+    setProductPageSize(nextSize);
+    setProductPage(1);
+  };
+
   return (
     <div className="min-h-screen flex flex-col bg-body text-primary">
       <Header
+        activePage={activePage}
+        onActivePageChange={handleActivePageChange}
         role={role}
         onRoleChange={setRole}
         themeMode={themeMode}
         onThemeModeChange={onThemeModeChange}
         counts={counts}
+        productsCount={productSummary.totalProducts}
         loading={loading}
-        onOpenNewOrder={() => setShowNewOrderModal(true)}
+        onOpenNewOrder={handleOpenCreateOrder}
         onSeedOrders={handleSeedOrders}
       />
 
-      <main className="flex-1 max-w-[1600px] w-full mx-auto px-4 sm:px-6 py-5 grid grid-cols-1 lg:grid-cols-12 gap-5">
-        <OrderTable
-          role={role}
-          filteredOrders={filteredOrders}
-          packedOrdersCount={packedOrders.length}
-          counts={counts}
-          statusFilter={statusFilter}
-          onStatusFilterChange={setStatusFilter}
-          selectedOrderIds={selectedOrderIds}
-          onToggleSelectOrder={toggleSelectOrder}
-          onToggleSelectAllPacked={toggleSelectAllPacked}
-          loading={loading}
-          optimizing={optimizing}
-          onBatchPreparePacked={handleBatchPreparePacked}
-          onOptimizeRoute={handleOptimizeRoute}
-          onStartPicking={handleStartPicking}
-          onCompletePacking={handleCompletePacking}
-          onCompleteDelivery={handleCompleteDelivery}
-          onFailDelivery={handleFailDelivery}
-        />
-
-        <section className="lg:col-span-5 flex flex-col gap-4">
-          <RouteMap
-            depot={depot}
-            orders={orders}
+      {activePage === 'orders' ? (
+        <main className="flex-1 max-w-[1600px] w-full mx-auto px-4 sm:px-6 py-5 grid grid-cols-1 lg:grid-cols-12 gap-5">
+          <OrderTable
+            role={role}
+            filteredOrders={filteredOrders}
+            packedOrdersCount={packedOrders.length}
+            counts={counts}
+            statusFilter={statusFilter}
+            onStatusFilterChange={setStatusFilter}
             selectedOrderIds={selectedOrderIds}
-            polylinePositions={polylinePositions}
-            allMapPoints={allMapPoints}
-            isDarkMode={isDarkMode}
-          />
-
-          <ActiveTripPanel
-            depot={depot}
-            activeTrip={activeTrip}
-            routedOrders={routedOrders}
+            onToggleSelectOrder={toggleSelectOrder}
+            onToggleSelectAllPacked={toggleSelectAllPacked}
+            loading={loading}
+            optimizing={optimizing}
+            onBatchPreparePacked={handleBatchPreparePacked}
+            onOptimizeRoute={handleOptimizeRoute}
+            onEditOrder={handleOpenEditOrder}
+            onStartPicking={handleStartPicking}
+            onCompletePacking={handleCompletePacking}
             onCompleteDelivery={handleCompleteDelivery}
+            onFailDelivery={handleFailDelivery}
           />
-        </section>
-      </main>
 
-      <NewOrderModal
-        isOpen={showNewOrderModal}
-        onOpenChange={setShowNewOrderModal}
-        form={newOrderForm}
-        onFormChange={setNewOrderForm}
-        submitting={creatingOrder}
-        onSubmit={handleCreateOrder}
+          <section className="lg:col-span-5 flex flex-col gap-4">
+            <RouteMap
+              depot={depot}
+              orders={orders}
+              selectedOrderIds={selectedOrderIds}
+              polylinePositions={polylinePositions}
+              allMapPoints={allMapPoints}
+              isDarkMode={isDarkMode}
+            />
+
+            <ActiveTripPanel
+              depot={depot}
+              activeTrip={activeTrip}
+              routedOrders={routedOrders}
+              onCompleteDelivery={handleCompleteDelivery}
+            />
+          </section>
+        </main>
+      ) : (
+        <main className="flex-1 max-w-[1600px] w-full mx-auto px-4 sm:px-6 py-5">
+          <ProductManagementPage
+            role={role}
+            products={products}
+            pagination={productPagination}
+            summary={productSummary}
+            searchQuery={productSearch}
+            onSearchQueryChange={handleProductSearchChange}
+            categoryFilter={productCategory}
+            onCategoryFilterChange={handleProductCategoryChange}
+            onPageChange={setProductPage}
+            onPageSizeChange={handleProductPageSizeChange}
+            loading={loadingProducts}
+            onOpenCreateProduct={handleOpenCreateProduct}
+            onEditProduct={handleOpenEditProduct}
+            onToggleActive={handleToggleProductActive}
+            onDeleteProduct={handleDeleteProduct}
+          />
+        </main>
+      )}
+
+      <OrderFormModal
+        isOpen={showOrderModal}
+        onOpenChange={(open) => {
+          setShowOrderModal(open);
+          if (!open) {
+            setEditingOrder(null);
+          }
+        }}
+        mode={orderModalMode}
+        editingOrder={editingOrder}
+        form={orderForm}
+        onFormChange={setOrderForm}
+        products={catalogProducts}
+        depot={depot}
+        isDarkMode={isDarkMode}
+        submitting={savingOrder}
+        onSubmit={handleSubmitOrder}
+      />
+
+      <ProductFormModal
+        isOpen={showProductModal}
+        onOpenChange={(open) => {
+          setShowProductModal(open);
+          if (!open) {
+            setEditingProduct(null);
+          }
+        }}
+        mode={productModalMode}
+        editingProduct={editingProduct}
+        form={productForm}
+        onFormChange={setProductForm}
+        submitting={savingProduct}
+        onSubmit={handleSubmitProduct}
       />
     </div>
   );

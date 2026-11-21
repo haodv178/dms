@@ -1,4 +1,5 @@
 export type Role = 'ADMIN' | 'WAREHOUSE' | 'DRIVER';
+export type ActivePage = 'orders' | 'products';
 export type OrderStatus =
   | 'NEW'
   | 'PICKING'
@@ -27,6 +28,8 @@ export type StatusBadgeVariant =
 
 export interface OrderItem {
   id: number;
+  productId?: number | null;
+  sku?: string | null;
   productName: string;
   quantity: number;
   price: string | number;
@@ -79,25 +82,77 @@ export interface Order {
   createdAt: string;
 }
 
-export interface NewOrderFormState {
+export interface OrderItemFormState {
+  productId?: number | null;
+  sku: string;
+  productName: string;
+  quantity: string;
+  price: string;
+}
+
+export interface OrderFormState {
   customerName: string;
   customerPhone: string;
   customerAddress: string;
   latitude: string;
   longitude: string;
-  totalAmount: string;
-  productName: string;
+  items: OrderItemFormState[];
 }
 
-export const INITIAL_NEW_ORDER_FORM: NewOrderFormState = {
+export const EDITABLE_ORDER_STATUSES: readonly OrderStatus[] = [
+  'NEW',
+  'PICKING',
+  'PACKED',
+] as const;
+
+export function isOrderEditable(status: OrderStatus): boolean {
+  return EDITABLE_ORDER_STATUSES.includes(status);
+}
+
+export function canRoleEditOrders(role: Role): boolean {
+  return role === 'ADMIN' || role === 'WAREHOUSE';
+}
+
+export const INITIAL_ORDER_FORM: OrderFormState = {
   customerName: '',
   customerPhone: '',
   customerAddress: '',
   latitude: '10.7465',
   longitude: '106.7075',
-  totalAmount: '350000',
-  productName: 'Combo Thực phẩm Tươi sống Lotte Mart',
+  items: [],
 };
+
+export function orderToFormState(order: Order, catalog: Product[] = []): OrderFormState {
+  const byName = new Map(catalog.map((p) => [p.name.toLowerCase(), p]));
+  return {
+    customerName: order.customerName,
+    customerPhone: order.customerPhone,
+    customerAddress: order.customerAddress,
+    latitude: String(order.latitude),
+    longitude: String(order.longitude),
+    items: (order.items ?? []).map((item) => {
+      const matched = byName.get(item.productName.toLowerCase());
+      return {
+        productId: item.productId ?? matched?.id ?? null,
+        sku: item.sku || matched?.sku || '—',
+        productName: item.productName,
+        quantity: String(item.quantity),
+        price: String(Number(item.price)),
+      };
+    }),
+  };
+}
+
+export function computeOrderFormTotal(items: OrderItemFormState[]): number {
+  return items.reduce((sum, item) => {
+    const qty = Number(item.quantity);
+    const price = Number(item.price);
+    if (!Number.isFinite(qty) || !Number.isFinite(price) || qty <= 0 || price < 0) {
+      return sum;
+    }
+    return sum + qty * price;
+  }, 0);
+}
 
 export const DEFAULT_DEPOT: Store = {
   id: 1,
@@ -184,6 +239,80 @@ export const STATUS_TABS = [
   { key: 'DELIVERING', label: 'Đang giao (Delivering)' },
   { key: 'COMPLETED', label: 'Hoàn thành (Completed)' },
 ] as const;
+
+export interface Product {
+  id: number;
+  sku: string;
+  name: string;
+  category: string;
+  unit: string;
+  price: string | number;
+  stock: number;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProductPagination {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+}
+
+export interface ProductSummary {
+  totalProducts: number;
+  activeProducts: number;
+  lowStockProducts: number;
+  totalStock: number;
+}
+
+export interface PaginatedProductsResponse {
+  items: Product[];
+  pagination: ProductPagination;
+  summary: ProductSummary;
+}
+
+export interface ProductFormState {
+  sku: string;
+  name: string;
+  category: string;
+  unit: string;
+  price: string;
+  stock: string;
+  isActive: boolean;
+}
+
+export const PRODUCT_CATEGORIES = [
+  'Thực phẩm tươi sống',
+  'Rau củ & Trái cây',
+  'Thực phẩm khô',
+  'Sữa & Đồ uống',
+  'Hóa mỹ phẩm',
+  'Khác',
+] as const;
+
+export const INITIAL_PRODUCT_FORM: ProductFormState = {
+  sku: '',
+  name: '',
+  category: 'Thực phẩm tươi sống',
+  unit: 'Hộp',
+  price: '50000',
+  stock: '50',
+  isActive: true,
+};
+
+export function productToFormState(product: Product): ProductFormState {
+  return {
+    sku: product.sku,
+    name: product.name,
+    category: product.category,
+    unit: product.unit,
+    price: String(Number(product.price)),
+    stock: String(product.stock),
+    isActive: product.isActive,
+  };
+}
 
 export function formatVND(val: string | number): string {
   return Number(val).toLocaleString('vi-VN', { style: 'currency', currency: 'VND' });
