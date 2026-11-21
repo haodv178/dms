@@ -50,8 +50,44 @@ export interface Store {
   notes?: string | null;
   ordersCount?: number;
   tripsCount?: number;
+  totalStock?: number;
+  inStockSkuCount?: number;
+  lowStockSkuCount?: number;
   createdAt?: string;
   updatedAt?: string;
+}
+
+export interface StoreInventoryItem {
+  productId: number;
+  sku: string;
+  name: string;
+  category: string;
+  unit: string;
+  price: string | number;
+  isActive: boolean;
+  quantity: number;
+  updatedAt: string;
+}
+
+export interface StoreInventorySummary {
+  totalProducts: number;
+  inStockSkuCount: number;
+  outOfStockSkuCount: number;
+  lowStockSkuCount: number;
+  totalStock: number;
+}
+
+export interface PaginatedStoreInventoryResponse {
+  store: {
+    id: number;
+    code: string;
+    name: string;
+    isDefault: boolean;
+    isActive: boolean;
+  };
+  items: StoreInventoryItem[];
+  pagination: ProductPagination;
+  summary: StoreInventorySummary;
 }
 
 export interface StorePagination {
@@ -324,11 +360,11 @@ export function computeOrderFormTotal(items: OrderItemFormState[]): number {
 export const DEFAULT_DEPOT: Store = {
   id: 1,
   code: 'DEP-001',
-  name: 'Lotte Mart Quận 7 (Depot)',
-  address: '469 Nguyễn Hữu Thọ, Tân Hưng, Quận 7, TP.HCM',
-  latitude: 10.7423,
-  longitude: 106.7024,
-  phone: '02837753232',
+  name: 'Bến Thành',
+  address: '156 Lê Thánh Tôn',
+  latitude: 10.769568,
+  longitude: 106.696129,
+  phone: '02871744091',
   isDefault: true,
   isActive: true,
   notes: '',
@@ -413,6 +449,15 @@ export const STATUS_TABS = [
   { key: 'FAILED', label: 'Thất bại (Failed)' },
 ] as const;
 
+export interface ProductDepotStock {
+  storeId: number;
+  storeCode: string;
+  storeName: string;
+  isDefault: boolean;
+  isActive: boolean;
+  quantity: number;
+}
+
 export interface Product {
   id: number;
   sku: string;
@@ -421,6 +466,8 @@ export interface Product {
   unit: string;
   price: string | number;
   stock: number;
+  totalStock?: number;
+  depotStocks?: ProductDepotStock[];
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
@@ -452,7 +499,7 @@ export interface ProductFormState {
   category: string;
   unit: string;
   price: string;
-  stock: string;
+  depotStocks: Record<number, string>;
   isActive: boolean;
 }
 
@@ -471,18 +518,43 @@ export const INITIAL_PRODUCT_FORM: ProductFormState = {
   category: 'Thực phẩm tươi sống',
   unit: 'Hộp',
   price: '50000',
-  stock: '50',
+  depotStocks: {},
   isActive: true,
 };
 
-export function productToFormState(product: Product): ProductFormState {
+export function createInitialProductForm(stores: Store[]): ProductFormState {
+  const depotStocks: Record<number, string> = {};
+  for (const s of stores) {
+    depotStocks[s.id] = s.isDefault ? '50' : '0';
+  }
+  return {
+    ...INITIAL_PRODUCT_FORM,
+    depotStocks,
+  };
+}
+
+export function productToFormState(product: Product, stores: Store[] = []): ProductFormState {
+  const depotStocks: Record<number, string> = {};
+  for (const s of stores) {
+    depotStocks[s.id] = '0';
+  }
+  if (Array.isArray(product.depotStocks) && product.depotStocks.length > 0) {
+    for (const ds of product.depotStocks) {
+      depotStocks[ds.storeId] = String(ds.quantity);
+    }
+  } else {
+    const defaultStore = stores.find((s) => s.isDefault) ?? stores[0];
+    if (defaultStore) {
+      depotStocks[defaultStore.id] = String(product.stock ?? 0);
+    }
+  }
   return {
     sku: product.sku,
     name: product.name,
     category: product.category,
     unit: product.unit,
     price: String(Number(product.price)),
-    stock: String(product.stock),
+    depotStocks,
     isActive: product.isActive,
   };
 }

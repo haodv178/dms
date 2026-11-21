@@ -177,6 +177,7 @@ async function main() {
   const batchSuffix = Date.now().toString().slice(-4);
 
   const records = [];
+  const skus: string[] = [];
   for (let i = 1; i <= count; i++) {
     const category = categories[(i - 1) % categories.length];
     const cfg = CATEGORY_CATALOG[category];
@@ -190,28 +191,17 @@ async function main() {
       cfg.minPrice + rand() * (cfg.maxPrice - cfg.minPrice);
     const price = Math.round(rawPrice / 1000) * 1000;
 
-    // Distribute stock realistically: ~5% out of stock, ~10% low stock (1-10), ~85% normal (11-250)
-    const stockRoll = rand();
-    let stock: number;
-    if (stockRoll < 0.05) {
-      stock = 0;
-    } else if (stockRoll < 0.15) {
-      stock = 1 + Math.floor(rand() * 10);
-    } else {
-      stock = 11 + Math.floor(rand() * 240);
-    }
-
     const isActive = rand() >= 0.05;
     const sku = `LM-${cfg.prefix}-${batchSuffix}-${String(i).padStart(4, '0')}`;
     const name = `${item} ${brand} ${variant}`;
 
+    skus.push(sku);
     records.push({
       sku,
       name,
       category,
       unit,
       price,
-      stock,
       isActive,
     });
   }
@@ -221,9 +211,49 @@ async function main() {
     skipDuplicates: true,
   });
 
+  // Initialize per-depot stock for all existing stores
+  const [stores, insertedProducts] = await Promise.all([
+    prisma.store.findMany({ orderBy: [{ isDefault: 'desc' }, { id: 'asc' }] }),
+    prisma.product.findMany({
+      where: { sku: { in: skus } },
+      select: { id: true },
+    }),
+  ]);
+
+  if (stores.length > 0 && insertedProducts.length > 0) {
+    const stockRows: Array<{ storeId: number; productId: number; quantity: number }> = [];
+    for (const store of stores) {
+      for (const product of insertedProducts) {
+        // Distribute stock realistically per depot: ~5% out of stock, ~10% low stock (1-10), ~85% normal (11-250)
+        const stockRoll = rand();
+        let quantity: number;
+        if (stockRoll < 0.05) {
+          quantity = 0;
+        } else if (stockRoll < 0.15) {
+          quantity = 1 + Math.floor(rand() * 10);
+        } else {
+          quantity = 11 + Math.floor(rand() * 240);
+        }
+        stockRows.push({
+          storeId: store.id,
+          productId: product.id,
+          quantity,
+        });
+      }
+    }
+
+    const chunkSize = 2000;
+    for (let offset = 0; offset < stockRows.length; offset += chunkSize) {
+      await prisma.depotStock.createMany({
+        data: stockRows.slice(offset, offset + chunkSize),
+        skipDuplicates: true,
+      });
+    }
+  }
+
   const totalProducts = await prisma.product.count();
   console.log(
-    `Inserted ${result.count} products. Total products in database: ${totalProducts}`
+    `Inserted ${result.count} products and initialized stock across ${stores.length} depot(s). Total products in database: ${totalProducts}`
   );
 }
 

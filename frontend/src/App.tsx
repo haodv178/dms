@@ -54,6 +54,7 @@ import {
   INITIAL_PRODUCT_FORM,
   INITIAL_STORE_FORM,
   MAX_DELIVERY_DISTANCE_KM,
+  createInitialProductForm,
   driverToFormState,
   haversineDistanceKm,
   orderToFormState,
@@ -135,6 +136,7 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
   const [productSearch, setProductSearch] = useState<string>('');
   const [debouncedProductSearch, setDebouncedProductSearch] = useState<string>('');
   const [productCategory, setProductCategory] = useState<string>('ALL');
+  const [productDepotFilter, setProductDepotFilter] = useState<string>('ALL');
   const [loadingProducts, setLoadingProducts] = useState<boolean>(false);
 
   const [depot, setDepot] = useState<Store>(DEFAULT_DEPOT);
@@ -269,11 +271,18 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
       page = productPage,
       limit = productPageSize,
       search = debouncedProductSearch,
-      category = productCategory
+      category = productCategory,
+      depotFilter = productDepotFilter
     ) => {
       setLoadingProducts(true);
       try {
-        const res = await fetchProducts({ page, limit, search, category });
+        const res = await fetchProducts({
+          page,
+          limit,
+          search,
+          category,
+          storeId: depotFilter === 'ALL' ? 'ALL' : Number(depotFilter),
+        });
         setProducts(res.items);
         setProductPagination(res.pagination);
         setProductSummary(res.summary);
@@ -286,7 +295,7 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
         setLoadingProducts(false);
       }
     },
-    [productPage, productPageSize, debouncedProductSearch, productCategory, notify]
+    [productPage, productPageSize, debouncedProductSearch, productCategory, productDepotFilter, notify]
   );
 
   const loadCatalogProducts = useCallback(async () => {
@@ -490,8 +499,8 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
   const handleFailDelivery = async (orderId: number) => {
     try {
       await failDeliveryOrder(orderId);
-      notify(`Đơn #${orderId}: Đã đánh dấu GIAO THẤT BẠI (FAILED).`);
-      await Promise.all([loadAllData(), loadDriversPage()]);
+      notify(`Đơn #${orderId}: Đã đánh dấu GIAO THẤT BẠI (FAILED) và hoàn tồn kho về depot.`);
+      await Promise.all([loadAllData(), loadDriversPage(), loadProductsPage(), loadStoresPage()]);
     } catch (err) {
       notify(getErrorMessage(err), 'error');
     }
@@ -508,7 +517,7 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
       const { message } = await assignDriverToOrder(orderId, driverId);
       notify(message, 'info');
       setAssigningOrder(null);
-      await Promise.all([loadAllData(), loadDriversPage()]);
+      await Promise.all([loadAllData(), loadDriversPage(), loadProductsPage(), loadStoresPage()]);
     } catch (err) {
       notify(getErrorMessage(err), 'error');
     } finally {
@@ -541,7 +550,7 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
       notify(result.message, 'info');
       setSelectedOrderIds([]);
       setBulkAssignTarget(null);
-      await Promise.all([loadAllData(), loadDriversPage()]);
+      await Promise.all([loadAllData(), loadDriversPage(), loadProductsPage(), loadStoresPage()]);
     } catch (err) {
       notify(getErrorMessage(err), 'error');
     } finally {
@@ -583,7 +592,7 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
       const { message } = await assignDriverToOrder(orderId, null);
       notify(message, 'info');
       setAssigningOrder(null);
-      await Promise.all([loadAllData(), loadDriversPage()]);
+      await Promise.all([loadAllData(), loadDriversPage(), loadProductsPage(), loadStoresPage()]);
     } catch (err) {
       notify(getErrorMessage(err), 'error');
     } finally {
@@ -750,7 +759,7 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
       setShowOrderModal(false);
       setEditingOrder(null);
       setOrderForm(INITIAL_ORDER_FORM);
-      await Promise.all([loadAllData(), loadStoresPage()]);
+      await Promise.all([loadAllData(), loadStoresPage(), loadProductsPage(), loadCatalogProducts()]);
     } catch (err) {
       notify(getErrorMessage(err), 'error');
     } finally {
@@ -806,14 +815,14 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
   const handleOpenCreateProduct = () => {
     setProductModalMode('create');
     setEditingProduct(null);
-    setProductForm(INITIAL_PRODUCT_FORM);
+    setProductForm(createInitialProductForm(allStores));
     setShowProductModal(true);
   };
 
   const handleOpenEditProduct = (product: Product) => {
     setProductModalMode('edit');
     setEditingProduct(product);
-    setProductForm(productToFormState(product));
+    setProductForm(productToFormState(product, allStores));
     setShowProductModal(true);
   };
 
@@ -825,14 +834,19 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
     }
 
     const price = Number(productForm.price);
-    const stock = Number(productForm.stock);
     if (!Number.isFinite(price) || price < 0) {
       notify('Đơn giá phải là số hợp lệ >= 0.', 'error');
       return;
     }
-    if (!Number.isInteger(stock) || stock < 0) {
-      notify('Tồn kho phải là số nguyên >= 0.', 'error');
-      return;
+
+    for (const [storeIdStr, qtyStr] of Object.entries(productForm.depotStocks)) {
+      const qty = qtyStr.trim() === '' ? 0 : Number(qtyStr);
+      if (!Number.isInteger(qty) || qty < 0) {
+        const storeName =
+          allStores.find((s) => s.id === Number(storeIdStr))?.name ?? `Depot #${storeIdStr}`;
+        notify(`Tồn kho tại "${storeName}" phải là số nguyên >= 0.`, 'error');
+        return;
+      }
     }
 
     setSavingProduct(true);
@@ -847,7 +861,7 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
       setShowProductModal(false);
       setEditingProduct(null);
       setProductForm(INITIAL_PRODUCT_FORM);
-      await Promise.all([loadProductsPage(), loadCatalogProducts()]);
+      await Promise.all([loadProductsPage(), loadCatalogProducts(), loadStoresPage()]);
     } catch (err) {
       notify(getErrorMessage(err), 'error');
     } finally {
@@ -858,7 +872,7 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
   const handleToggleProductActive = async (product: Product) => {
     try {
       const nextForm: ProductFormState = {
-        ...productToFormState(product),
+        ...productToFormState(product, allStores),
         isActive: !product.isActive,
       };
       await updateProduct(product.id, nextForm);
@@ -877,7 +891,7 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
     try {
       await deleteProduct(product.id);
       notify(`Đã xóa sản phẩm "${product.name}" thành công!`);
-      await Promise.all([loadProductsPage(), loadCatalogProducts()]);
+      await Promise.all([loadProductsPage(), loadCatalogProducts(), loadStoresPage()]);
     } catch (err) {
       notify(getErrorMessage(err), 'error');
     }
@@ -890,6 +904,11 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
 
   const handleProductCategoryChange = (value: string) => {
     setProductCategory(value);
+    setProductPage(1);
+  };
+
+  const handleProductDepotFilterChange = (value: string) => {
+    setProductDepotFilter(value);
     setProductPage(1);
   };
 
@@ -1193,6 +1212,9 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
           <ProductManagementPage
             role={role}
             products={products}
+            stores={allStores}
+            depotFilter={productDepotFilter}
+            onDepotFilterChange={handleProductDepotFilterChange}
             pagination={productPagination}
             summary={productSummary}
             searchQuery={productSearch}
@@ -1251,6 +1273,9 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
             onSetDefaultStore={handleSetDefaultStore}
             onToggleStoreActive={handleToggleStoreActive}
             onDeleteStore={handleDeleteStore}
+            onInventoryUpdated={() => {
+              void Promise.all([loadStoresPage(), loadProductsPage(), loadCatalogProducts()]);
+            }}
           />
         </main>
       )}
@@ -1285,6 +1310,7 @@ function DmsDashboard({ themeMode, onThemeModeChange, isDarkMode }: DmsDashboard
         }}
         mode={productModalMode}
         editingProduct={editingProduct}
+        stores={allStores}
         form={productForm}
         onFormChange={setProductForm}
         submitting={savingProduct}

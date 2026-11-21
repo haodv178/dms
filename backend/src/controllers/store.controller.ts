@@ -1,12 +1,26 @@
 import { Request, Response } from 'express';
 import { Prisma, PrismaClient } from '@prisma/client';
 import prisma from '../lib/prisma';
+import { LOW_STOCK_THRESHOLD } from '../lib/inventory';
 
 type StoreWithCounts = Prisma.StoreGetPayload<{
   include: { _count: { select: { orders: true; trips: true } } };
 }>;
 
-function serializeStore(store: StoreWithCounts) {
+interface StoreInventoryMetrics {
+  totalStock: number;
+  inStockSkuCount: number;
+  lowStockSkuCount: number;
+}
+
+function serializeStore(
+  store: StoreWithCounts,
+  inventory: StoreInventoryMetrics = {
+    totalStock: 0,
+    inStockSkuCount: 0,
+    lowStockSkuCount: 0,
+  }
+) {
   return {
     id: store.id,
     code: store.code || `DEP-${String(store.id).padStart(3, '0')}`,
@@ -20,9 +34,52 @@ function serializeStore(store: StoreWithCounts) {
     notes: store.notes || '',
     ordersCount: store._count.orders,
     tripsCount: store._count.trips,
+    totalStock: inventory.totalStock,
+    inStockSkuCount: inventory.inStockSkuCount,
+    lowStockSkuCount: inventory.lowStockSkuCount,
     createdAt: store.createdAt,
     updatedAt: store.updatedAt,
   };
+}
+
+async function computeInventoryMetricsForStores(
+  storeIds: number[]
+): Promise<Map<number, StoreInventoryMetrics>> {
+  const result = new Map<number, StoreInventoryMetrics>();
+  if (storeIds.length === 0) return result;
+
+  const [totalProducts, sumRows, inStockRows, aboveLowRows] = await Promise.all([
+    prisma.product.count(),
+    prisma.depotStock.groupBy({
+      by: ['storeId'],
+      where: { storeId: { in: storeIds } },
+      _sum: { quantity: true },
+    }),
+    prisma.depotStock.groupBy({
+      by: ['storeId'],
+      where: { storeId: { in: storeIds }, quantity: { gt: 0 } },
+      _count: { _all: true },
+    }),
+    prisma.depotStock.groupBy({
+      by: ['storeId'],
+      where: { storeId: { in: storeIds }, quantity: { gt: LOW_STOCK_THRESHOLD } },
+      _count: { _all: true },
+    }),
+  ]);
+
+  const sumByStore = new Map(sumRows.map((r) => [r.storeId, r._sum.quantity ?? 0]));
+  const inStockByStore = new Map(inStockRows.map((r) => [r.storeId, r._count._all]));
+  const aboveLowByStore = new Map(aboveLowRows.map((r) => [r.storeId, r._count._all]));
+
+  for (const storeId of storeIds) {
+    result.set(storeId, {
+      totalStock: sumByStore.get(storeId) ?? 0,
+      inStockSkuCount: inStockByStore.get(storeId) ?? 0,
+      lowStockSkuCount: Math.max(0, totalProducts - (aboveLowByStore.get(storeId) ?? 0)),
+    });
+  }
+
+  return result;
 }
 
 function validateCoordinates(
@@ -166,12 +223,16 @@ export const getStores = async (req: Request, res: Response) => {
       prisma.trip.count(),
     ]);
 
+    const inventoryByStore = await computeInventoryMetricsForStores(
+      stores.map((s) => s.id)
+    );
+
     const defaultStore =
       allSummaryStores.find((s) => s.isDefault) ?? allSummaryStores[0] ?? null;
 
     res.json({
       success: true,
-      data: stores.map(serializeStore),
+      data: stores.map((s) => serializeStore(s, inventoryByStore.get(s.id))),
       pagination: {
         page: parsedPage,
         limit: parsedLimit,
@@ -209,7 +270,8 @@ export const getStoreById = async (req: Request, res: Response) => {
       return res.status(404).json({ success: false, message: 'Không tìm thấy điểm xuất phát.' });
     }
 
-    res.json({ success: true, data: serializeStore(store) });
+    const metrics = await computeInventoryMetricsForStores([store.id]);
+    res.json({ success: true, data: serializeStore(store, metrics.get(store.id)) });
   } catch (error: any) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -488,6 +550,204 @@ export const deleteStore = async (req: Request, res: Response) => {
     res.json({
       success: true,
       message: `Đã xóa điểm xuất phát "${existing.name}" thành công!`,
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const getStoreInventory = async (req: Request, res: Response) => {
+  try {
+    const storeId = Number(req.params.id);
+    if (!Number.isInteger(storeId) || storeId <= 0) {
+      return res.status(400).json({ success: false, message: 'ID depot không hợp lệ.' });
+    }
+
+    const store = await prisma.store.findUnique({
+      where: { id: storeId },
+      select: { id: true, code: true, name: true, isDefault: true, isActive: true },
+    });
+    if (!store) {
+      return res.status(404).json({ success: false, message: 'Không tìm thấy depot.' });
+    }
+
+    const search = typeof req.query.search === 'string' ? req.query.search.trim() : '';
+    const category = typeof req.query.category === 'string' ? req.query.category.trim() : '';
+    const stockFilter =
+      typeof req.query.stockFilter === 'string'
+        ? req.query.stockFilter.trim().toUpperCase()
+        : 'ALL';
+
+    const rawPage = Number(req.query.page ?? 1);
+    const rawLimit = Number(req.query.limit ?? 20);
+    const limit = Number.isFinite(rawLimit)
+      ? Math.min(100, Math.max(1, Math.floor(rawLimit)))
+      : 20;
+    const requestedPage = Number.isFinite(rawPage)
+      ? Math.max(1, Math.floor(rawPage))
+      : 1;
+
+    const where: Prisma.ProductWhereInput = {};
+    if (category && category !== 'ALL') {
+      where.category = category;
+    }
+    if (search) {
+      where.OR = [
+        { name: { contains: search, mode: 'insensitive' } },
+        { sku: { contains: search, mode: 'insensitive' } },
+        { category: { contains: search, mode: 'insensitive' } },
+      ];
+    }
+
+    if (stockFilter === 'IN_STOCK') {
+      where.depotStocks = { some: { storeId, quantity: { gt: 0 } } };
+    } else if (stockFilter === 'OUT_OF_STOCK') {
+      where.NOT = { depotStocks: { some: { storeId, quantity: { gt: 0 } } } };
+    } else if (stockFilter === 'LOW_STOCK') {
+      where.NOT = { depotStocks: { some: { storeId, quantity: { gt: LOW_STOCK_THRESHOLD } } } };
+    }
+
+    const [total, totalProducts, stockAgg, inStockSkuCount, aboveLowCount] =
+      await Promise.all([
+        prisma.product.count({ where }),
+        prisma.product.count(),
+        prisma.depotStock.aggregate({
+          where: { storeId },
+          _sum: { quantity: true },
+        }),
+        prisma.depotStock.count({
+          where: { storeId, quantity: { gt: 0 } },
+        }),
+        prisma.depotStock.count({
+          where: { storeId, quantity: { gt: LOW_STOCK_THRESHOLD } },
+        }),
+      ]);
+
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+    const page = Math.min(requestedPage, totalPages);
+
+    const products = await prisma.product.findMany({
+      where,
+      include: {
+        depotStocks: {
+          where: { storeId },
+          select: { quantity: true, updatedAt: true },
+        },
+      },
+      orderBy: [{ id: 'desc' }],
+      skip: (page - 1) * limit,
+      take: limit,
+    });
+
+    res.json({
+      success: true,
+      store: {
+        id: store.id,
+        code: store.code || `DEP-${String(store.id).padStart(3, '0')}`,
+        name: store.name,
+        isDefault: store.isDefault,
+        isActive: store.isActive,
+      },
+      data: products.map((p) => ({
+        productId: p.id,
+        sku: p.sku,
+        name: p.name,
+        category: p.category,
+        unit: p.unit,
+        price: p.price,
+        isActive: p.isActive,
+        quantity: p.depotStocks[0]?.quantity ?? 0,
+        updatedAt: p.depotStocks[0]?.updatedAt ?? p.updatedAt,
+      })),
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages,
+      },
+      summary: {
+        totalProducts,
+        inStockSkuCount,
+        outOfStockSkuCount: Math.max(0, totalProducts - inStockSkuCount),
+        lowStockSkuCount: Math.max(0, totalProducts - aboveLowCount),
+        totalStock: stockAgg._sum.quantity ?? 0,
+      },
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const updateStoreInventory = async (req: Request, res: Response) => {
+  try {
+    const storeId = Number(req.params.id);
+    if (!Number.isInteger(storeId) || storeId <= 0) {
+      return res.status(400).json({ success: false, message: 'ID depot không hợp lệ.' });
+    }
+
+    const store = await prisma.store.findUnique({ where: { id: storeId } });
+    if (!store) {
+      return res.status(404).json({ success: false, message: 'Không tìm thấy depot.' });
+    }
+
+    const rawItems = req.body?.items;
+    if (!Array.isArray(rawItems) || rawItems.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Vui lòng cung cấp danh sách sản phẩm cần cập nhật tồn kho.',
+      });
+    }
+
+    const updates = new Map<number, number>();
+    for (const raw of rawItems) {
+      const productId = Number((raw as Record<string, unknown>)?.productId);
+      const quantity = Number((raw as Record<string, unknown>)?.quantity);
+      if (!Number.isInteger(productId) || productId <= 0) {
+        return res.status(400).json({ success: false, message: 'ID sản phẩm không hợp lệ.' });
+      }
+      if (!Number.isInteger(quantity) || quantity < 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Số lượng tồn kho phải là số nguyên >= 0.',
+        });
+      }
+      updates.set(productId, quantity);
+    }
+
+    const productIds = Array.from(updates.keys());
+    const existingProducts = await prisma.product.findMany({
+      where: { id: { in: productIds } },
+      select: { id: true },
+    });
+    if (existingProducts.length !== productIds.length) {
+      return res.status(404).json({
+        success: false,
+        message: 'Một hoặc nhiều sản phẩm không tồn tại trong hệ thống.',
+      });
+    }
+
+    await prisma.$transaction(async (tx) => {
+      for (const [productId, quantity] of updates.entries()) {
+        await tx.depotStock.upsert({
+          where: {
+            storeId_productId: {
+              storeId,
+              productId,
+            },
+          },
+          update: { quantity },
+          create: { storeId, productId, quantity },
+        });
+      }
+    });
+
+    res.json({
+      success: true,
+      message: `Đã cập nhật tồn kho ${updates.size} sản phẩm tại "${store.name}" thành công!`,
+      data: {
+        storeId,
+        updatedCount: updates.size,
+      },
     });
   } catch (error: any) {
     res.status(500).json({ success: false, message: error.message });

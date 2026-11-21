@@ -11,6 +11,7 @@ import {
   type OrderFormState,
   type PaginatedDriversResponse,
   type PaginatedProductsResponse,
+  type PaginatedStoreInventoryResponse,
   type PaginatedStoresResponse,
   type Product,
   type ProductFormState,
@@ -18,6 +19,7 @@ import {
   type ProductSummary,
   type Store,
   type StoreFormState,
+  type StoreInventoryItem,
   type StorePagination,
   type StoreSummary,
   type Trip,
@@ -194,6 +196,7 @@ export interface FetchProductsParams {
   search?: string;
   category?: string;
   activeOnly?: boolean;
+  storeId?: number | 'ALL';
 }
 
 export async function fetchProducts(
@@ -205,6 +208,9 @@ export async function fetchProducts(
   if (params.search && params.search.trim()) query.search = params.search.trim();
   if (params.category && params.category !== 'ALL') query.category = params.category;
   if (params.activeOnly) query.activeOnly = true;
+  if (params.storeId !== undefined && params.storeId !== 'ALL') {
+    query.storeId = params.storeId;
+  }
 
   const res = await axios.get(`${API_BASE}/products`, { params: query });
   const items = (res.data?.data as Product[]) || [];
@@ -225,13 +231,17 @@ export async function fetchProducts(
 }
 
 function serializeProductPayload(form: ProductFormState) {
+  const depotStocks = Object.entries(form.depotStocks).map(([storeId, qty]) => ({
+    storeId: Number(storeId),
+    quantity: qty.trim() === '' ? 0 : Number(qty),
+  }));
   return {
     sku: form.sku.trim(),
     name: form.name.trim(),
     category: form.category.trim(),
     unit: form.unit.trim() || 'Cái',
     price: Number(form.price),
-    stock: Number(form.stock),
+    depotStocks,
     isActive: form.isActive,
   };
 }
@@ -403,6 +413,47 @@ export async function setDefaultStore(storeId: number): Promise<{ store: Store; 
 
 export async function deleteStore(storeId: number): Promise<void> {
   await axios.delete(`${API_BASE}/stores/${storeId}`);
+}
+
+export interface FetchStoreInventoryParams {
+  page?: number;
+  limit?: number;
+  search?: string;
+  category?: string;
+  stockFilter?: 'ALL' | 'IN_STOCK' | 'LOW_STOCK' | 'OUT_OF_STOCK';
+}
+
+export async function fetchStoreInventory(
+  storeId: number,
+  params: FetchStoreInventoryParams = {}
+): Promise<PaginatedStoreInventoryResponse> {
+  const query: Record<string, string | number> = {};
+  if (params.page !== undefined) query.page = params.page;
+  if (params.limit !== undefined) query.limit = params.limit;
+  if (params.search && params.search.trim()) query.search = params.search.trim();
+  if (params.category && params.category !== 'ALL') query.category = params.category;
+  if (params.stockFilter && params.stockFilter !== 'ALL') {
+    query.stockFilter = params.stockFilter;
+  }
+
+  const res = await axios.get(`${API_BASE}/stores/${storeId}/inventory`, { params: query });
+  return {
+    store: res.data.store,
+    items: (res.data?.data as StoreInventoryItem[]) || [],
+    pagination: res.data.pagination,
+    summary: res.data.summary,
+  };
+}
+
+export async function updateStoreInventory(
+  storeId: number,
+  items: Array<{ productId: number; quantity: number }>
+): Promise<{ message: string; updatedCount: number }> {
+  const res = await axios.put(`${API_BASE}/stores/${storeId}/inventory`, { items });
+  return {
+    message: (res.data?.message as string) || 'Đã cập nhật tồn kho depot thành công!',
+    updatedCount: res.data?.data?.updatedCount ?? items.length,
+  };
 }
 
 export function getErrorMessage(err: unknown): string {

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Circle, MapContainer, Marker, Popup, TileLayer, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import {
+  Boxes,
   CheckCircle2,
   MapPin,
   Navigation,
@@ -36,12 +37,14 @@ import { TextInput } from '@astryxdesign/core/TextInput';
 import {
   DEFAULT_DEPOT,
   MAX_DELIVERY_DISTANCE_KM,
+  canRoleEditOrders,
   canRoleManageDepots,
   type Role,
   type Store,
   type StorePagination,
   type StoreSummary,
 } from '../types/dms';
+import { DepotInventoryModal } from './DepotInventoryModal';
 
 interface DepotManagementPageProps {
   role: Role;
@@ -62,6 +65,7 @@ interface DepotManagementPageProps {
   onSetDefaultStore: (store: Store) => Promise<void>;
   onToggleStoreActive: (store: Store) => Promise<void>;
   onDeleteStore: (store: Store) => Promise<void>;
+  onInventoryUpdated: () => void;
 }
 
 const LIGHT_TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
@@ -140,12 +144,15 @@ export function DepotManagementPage({
   onSetDefaultStore,
   onToggleStoreActive,
   onDeleteStore,
+  onInventoryUpdated,
 }: DepotManagementPageProps) {
   const [selectedMapStoreId, setSelectedMapStoreId] = useState<number | null>(null);
   const [deletingStore, setDeletingStore] = useState<Store | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [inventoryModalStore, setInventoryModalStore] = useState<Store | null>(null);
 
   const canManage = canRoleManageDepots(role);
+  const canManageInventory = canRoleEditOrders(role);
 
   const mapStores = useMemo(
     () => (allStores.length > 0 ? allStores : stores),
@@ -420,15 +427,16 @@ export function DepotManagementPage({
                   <TableHeaderCell>Tên &amp; Địa chỉ</TableHeaderCell>
                   <TableHeaderCell>Tọa độ GPS</TableHeaderCell>
                   <TableHeaderCell>Liên hệ</TableHeaderCell>
+                  <TableHeaderCell>Tồn kho</TableHeaderCell>
                   <TableHeaderCell>Đơn / Chuyến</TableHeaderCell>
                   <TableHeaderCell>Trạng thái</TableHeaderCell>
-                  {canManage && <TableHeaderCell>Thao tác</TableHeaderCell>}
+                  <TableHeaderCell>Thao tác</TableHeaderCell>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {loading && stores.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={canManage ? 7 : 6}>
+                    <TableCell colSpan={8}>
                       <div className="py-10 text-center">
                         <Text type="supporting" size="sm">
                           Đang tải danh sách điểm xuất phát...
@@ -438,7 +446,7 @@ export function DepotManagementPage({
                   </TableRow>
                 ) : stores.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={canManage ? 7 : 6}>
+                    <TableCell colSpan={8}>
                       <div className="py-10 text-center flex flex-col items-center gap-2">
                         <Warehouse className="w-8 h-8 text-secondary" />
                         <Text type="label" size="sm">
@@ -526,6 +534,17 @@ export function DepotManagementPage({
                         </TableCell>
 
                         <TableCell>
+                          <div className="flex flex-col gap-0.5">
+                            <Text type="label" size="xsm" hasTabularNumbers>
+                              {(store.totalStock ?? 0).toLocaleString('vi-VN')} sp
+                            </Text>
+                            <Text type="supporting" size="2xs" hasTabularNumbers>
+                              {(store.inStockSkuCount ?? 0).toLocaleString('vi-VN')} SKU còn hàng
+                            </Text>
+                          </div>
+                        </TableCell>
+
+                        <TableCell>
                           <div className="flex items-center gap-1.5">
                             <Badge label={`${ordersCount} đơn`} variant="cyan" />
                             <Badge label={`${tripsCount} chuyến`} variant="blue" />
@@ -539,25 +558,34 @@ export function DepotManagementPage({
                           />
                         </TableCell>
 
-                        {canManage && (
-                          <TableCell>
-                            <div className="flex items-center gap-1">
-                              {!isDefault && (
+                        <TableCell>
+                          <div className="flex items-center gap-1">
+                            <IconButton
+                              label={`Xem tồn kho ${store.name}`}
+                              tooltip={canManageInventory ? 'Xem & chỉnh tồn kho depot' : 'Xem tồn kho depot'}
+                              icon={<Boxes className="w-4 h-4" />}
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setInventoryModalStore(store)}
+                            />
+                            {canManage && (
+                              <>
+                                {!isDefault && (
+                                  <IconButton
+                                    label="Đặt làm điểm xuất phát mặc định"
+                                    tooltip="Đặt làm mặc định"
+                                    icon={<Star className="w-4 h-4" />}
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => void onSetDefaultStore(store)}
+                                  />
+                                )}
                                 <IconButton
-                                  label="Đặt làm điểm xuất phát mặc định"
-                                  tooltip="Đặt làm mặc định"
-                                  icon={<Star className="w-4 h-4" />}
+                                  label="Chỉnh sửa điểm xuất phát"
+                                  tooltip="Chỉnh sửa"
+                                  icon={<Pencil className="w-4 h-4" />}
                                   variant="ghost"
                                   size="sm"
-                                  onClick={() => void onSetDefaultStore(store)}
-                                />
-                              )}
-                              <IconButton
-                                label="Chỉnh sửa điểm xuất phát"
-                                tooltip="Chỉnh sửa"
-                                icon={<Pencil className="w-4 h-4" />}
-                                variant="ghost"
-                                size="sm"
                                 onClick={() => onEditStore(store)}
                               />
                               <IconButton
@@ -591,12 +619,13 @@ export function DepotManagementPage({
                                 icon={<Trash2 className="w-4 h-4" />}
                                 variant="destructive"
                                 size="sm"
-                                isDisabled={isDefault}
-                                onClick={() => setDeletingStore(store)}
-                              />
-                            </div>
-                          </TableCell>
-                        )}
+                                  isDisabled={isDefault}
+                                  onClick={() => setDeletingStore(store)}
+                                />
+                              </>
+                            )}
+                          </div>
+                        </TableCell>
                       </TableRow>
                     );
                   })
@@ -694,6 +723,14 @@ export function DepotManagementPage({
           }
         />
       </Dialog>
+
+      {/* Depot Inventory Modal */}
+      <DepotInventoryModal
+        store={inventoryModalStore}
+        canManage={canManageInventory}
+        onClose={() => setInventoryModalStore(null)}
+        onInventoryUpdated={onInventoryUpdated}
+      />
     </div>
   );
 }

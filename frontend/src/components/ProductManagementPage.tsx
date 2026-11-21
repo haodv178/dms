@@ -37,11 +37,15 @@ import {
   type ProductPagination,
   type ProductSummary,
   type Role,
+  type Store,
 } from '../types/dms';
 
 interface ProductManagementPageProps {
   role: Role;
   products: Product[];
+  stores: Store[];
+  depotFilter: string;
+  onDepotFilterChange: (value: string) => void;
   pagination: ProductPagination;
   summary: ProductSummary;
   searchQuery: string;
@@ -67,6 +71,9 @@ const PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
 export function ProductManagementPage({
   role,
   products,
+  stores,
+  depotFilter,
+  onDepotFilterChange,
   pagination,
   summary,
   searchQuery,
@@ -85,6 +92,18 @@ export function ProductManagementPage({
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   const canManage = canRoleEditOrders(role);
+  const selectedStore =
+    depotFilter !== 'ALL'
+      ? stores.find((s) => String(s.id) === depotFilter) ?? null
+      : null;
+
+  const depotFilterOptions = [
+    { value: 'ALL', label: 'Tất cả depot (Tổng tồn)' },
+    ...stores.map((s) => ({
+      value: String(s.id),
+      label: `${s.code || `DEP-${String(s.id).padStart(3, '0')}`} · ${s.name}${s.isDefault ? ' (Mặc định)' : ''}`,
+    })),
+  ];
 
   const startItem =
     pagination.total === 0 ? 0 : (pagination.page - 1) * pagination.limit + 1;
@@ -141,7 +160,9 @@ export function ProductManagementPage({
           <div className="flex items-center justify-between gap-3">
             <div className="flex flex-col gap-0.5">
               <Text type="supporting" size="xsm">
-                Sắp hết hàng (&le; 10)
+                {selectedStore
+                  ? `Sắp hết tại ${selectedStore.code || 'Depot'} (≤ 10)`
+                  : 'Sắp hết hàng (≤ 10)'}
               </Text>
               <Heading level={3} accessibilityLevel={2}>
                 {summary.lowStockProducts.toLocaleString('vi-VN')}
@@ -157,7 +178,9 @@ export function ProductManagementPage({
           <div className="flex items-center justify-between gap-3">
             <div className="flex flex-col gap-0.5">
               <Text type="supporting" size="xsm">
-                Tổng số lượng tồn kho
+                {selectedStore
+                  ? `Tồn kho tại ${selectedStore.code || selectedStore.name}`
+                  : 'Tổng tồn kho tất cả depot'}
               </Text>
               <Heading level={3} accessibilityLevel={2}>
                 {summary.totalStock.toLocaleString('vi-VN')}
@@ -203,11 +226,22 @@ export function ProductManagementPage({
               </div>
 
               <Selector
+                label="Lọc theo depot"
+                isLabelHidden
+                variant="secondary"
+                size="sm"
+                width={230}
+                options={depotFilterOptions}
+                value={depotFilter}
+                onChange={(val) => onDepotFilterChange(val as string)}
+              />
+
+              <Selector
                 label="Lọc theo danh mục"
                 isLabelHidden
                 variant="secondary"
                 size="sm"
-                width={200}
+                width={190}
                 options={CATEGORY_FILTER_OPTIONS}
                 value={categoryFilter}
                 onChange={(val) => onCategoryFilterChange(val as string)}
@@ -248,7 +282,11 @@ export function ProductManagementPage({
                     <TableHeaderCell>Danh Mục</TableHeaderCell>
                     <TableHeaderCell>Đơn Vị</TableHeaderCell>
                     <TableHeaderCell>Đơn Giá</TableHeaderCell>
-                    <TableHeaderCell>Tồn Kho</TableHeaderCell>
+                    <TableHeaderCell>
+                      {selectedStore
+                        ? `Tồn Kho (${selectedStore.code || selectedStore.name})`
+                        : 'Tồn Kho (Theo Depot)'}
+                    </TableHeaderCell>
                     <TableHeaderCell>Trạng Thái</TableHeaderCell>
                     {canManage && <TableHeaderCell>Thao Tác</TableHeaderCell>}
                   </TableRow>
@@ -299,7 +337,26 @@ export function ProductManagementPage({
                         </TableCell>
 
                         <TableCell>
-                          <Badge label={stockLabel} variant={stockBadgeVariant} />
+                          <div className="flex flex-col gap-1">
+                            <div>
+                              <Badge label={stockLabel} variant={stockBadgeVariant} />
+                            </div>
+                            {!selectedStore &&
+                              product.depotStocks &&
+                              product.depotStocks.length > 0 && (
+                                <div className="flex flex-wrap gap-1">
+                                  {product.depotStocks.map((ds) => (
+                                    <span
+                                      key={ds.storeId}
+                                      title={`${ds.storeName}: ${ds.quantity}`}
+                                      className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] bg-secondary/50 text-secondary border border-border/60 tabular-nums"
+                                    >
+                                      {ds.storeCode}: {ds.quantity}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                          </div>
                         </TableCell>
 
                         <TableCell>

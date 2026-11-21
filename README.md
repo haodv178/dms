@@ -83,25 +83,27 @@ doan/
 ├── README.md                    # Tài liệu tổng hợp toàn dự án
 ├── backend/                     # Node.js Monolithic Backend (:3000)
 │   ├── Dockerfile               # Docker image cho Backend
-│   ├── docker-entrypoint.sh     # Tự động đồng bộ Prisma schema & khởi chạy server
+│   ├── docker-entrypoint.sh     # Tự động migrate dữ liệu tồn kho cũ, đồng bộ Prisma schema & khởi chạy server
 │   ├── package.json
 │   ├── tsconfig.json
 │   ├── prisma/
-│   │   ├── schema.prisma        # Định nghĩa 7 bảng dữ liệu PostgreSQL (gồm Product & DriverProfile)
+│   │   ├── schema.prisma        # Định nghĩa 8 bảng dữ liệu PostgreSQL (gồm Product, DepotStock & DriverProfile)
+│   │   ├── migrate-depot-stocks.sql # Migration idempotent chuyển Product.stock cũ sang bảng DepotStock (Depot mặc định)
 │   │   ├── seed.ts              # Script nạp dữ liệu mẫu qua CLI
-│   │   └── seed-1000-products.ts # Script sinh 1.000 sản phẩm mẫu vào danh mục kho
+│   │   └── seed-1000-products.ts # Script sinh 1.000 sản phẩm mẫu kèm tồn kho theo từng depot
 │   └── src/
 │       ├── index.ts             # Entrypoint Express, tự động seed & đảm bảo điểm xuất phát mặc định
 │       ├── lib/
 │       │   ├── geo.ts           # Tính khoảng cách Haversine & kiểm tra bán kính giao hàng tối đa 5 km
+│       │   ├── inventory.ts     # Helper trừ/hoàn tồn kho atomic theo từng depot (chống âm kho)
 │       │   ├── prisma.ts        # Khởi tạo Prisma Client
-│       │   └── seeder.ts        # Logic tạo Kho mặc định (Depot), Users, 5 Tài xế, 16 Sản phẩm & 10 Đơn hàng mẫu
+│       │   └── seeder.ts        # Logic tạo Kho mặc định (Depot), Users, 5 Tài xế, 16 Sản phẩm (kèm DepotStock) & 10 Đơn hàng mẫu
 │       ├── controllers/
 │       │   ├── auth.controller.ts    # Login, Me, System Overview, Seed API
 │       │   ├── driver.controller.ts  # CRUD tài xế (User + DriverProfile), lọc trạng thái/loại xe & phân trang server
-│       │   ├── order.controller.ts   # Tạo/sửa đơn hàng (chọn điểm xuất phát & chặn cứng > 5 km), sắp xếp createdAt DESC, chuyển trạng thái, gán tài xế & bulk-action
-│       │   ├── product.controller.ts # CRUD sản phẩm, thống kê KPI & phân trang phía server
-│       │   ├── store.controller.ts   # CRUD điểm xuất phát (Multi-depot), đặt kho mặc định, thống kê đơn/chuyến & phân trang server
+│       │   ├── order.controller.ts   # Tạo/sửa đơn hàng (chọn depot, chặn > 5 km, trừ/hoàn tồn kho theo depot), chuyển trạng thái, gán tài xế & bulk-action
+│       │   ├── product.controller.ts # CRUD sản phẩm kèm tồn kho theo từng depot, lọc depot/danh mục, KPI & phân trang server
+│       │   ├── store.controller.ts   # CRUD điểm xuất phát (Multi-depot), đặt kho mặc định, thống kê đơn/chuyến/tồn kho & API tồn kho từng depot
 │       │   └── trip.controller.ts    # Tối ưu/tạo chuyến OR-Tools (chặn cứng đơn > 5 km từ điểm xuất phát), xuất phát (IN_TRANSIT), đổi tài xế, tối ưu lại & hủy chuyến
 │       └── routes/
 │           ├── auth.routes.ts
@@ -133,18 +135,19 @@ doan/
         └── components/
             ├── Header.tsx                  # Top Bar: Chuyển trang Đơn hàng/Chuyến xe/Sản phẩm/Tài xế/Điểm xuất phát, Role, Theme, Seed/New
             ├── OrderTable.tsx              # Trang chủ full-width: Bảng đơn hàng sắp xếp createdAt DESC (kèm tên kho xuất phát), thao tác hàng loạt theo vai trò, tìm kiếm & lọc trạng thái
-            ├── OrderFormModal.tsx          # Hộp thoại Tạo/Sửa đơn hàng: Chọn điểm xuất phát, mini-map Leaflet kèm vòng tròn 5 km (chặn cứng > 5 km) & chọn sản phẩm danh mục
+            ├── OrderFormModal.tsx          # Hộp thoại Tạo/Sửa đơn hàng: Chọn depot, mini-map 5 km, hiển thị tồn kho thực tế tại depot & chặn vượt tồn kho
             ├── AssignDriverModal.tsx       # Hộp thoại Astryx Dialog gán/đổi/bỏ gán tài xế trực tiếp cho từng đơn hàng
             ├── BulkAssignDriverModal.tsx   # Hộp thoại Astryx Dialog gán tài xế hàng loạt cho nhiều đơn đủ điều kiện
             ├── TripManagementPage.tsx      # Trang Quản lý Chuyến xe: KPI, master-detail danh sách chuyến (kèm điểm xuất phát), RouteMap & thao tác vòng đời chuyến
             ├── CreateTripModal.tsx         # Hộp thoại chọn điểm xuất phát, tài xế & đơn PACKED trong bán kính 5 km để tối ưu/tạo chuyến bằng Google OR-Tools
             ├── ReassignTripDriverModal.tsx # Hộp thoại đổi tài xế phụ trách cho chuyến xe đang hoạt động
             ├── RouteMap.tsx                # Bản đồ Leaflet OSM / CARTO Dark Matter hiển thị lộ trình chuyến đang chọn
-            ├── ProductManagementPage.tsx   # Trang Quản lý Sản phẩm: KPI, tìm kiếm, lọc danh mục & phân trang server
-            ├── ProductFormModal.tsx        # Hộp thoại Astryx Dialog thêm/sửa sản phẩm trong kho
+            ├── ProductManagementPage.tsx   # Trang Quản lý Sản phẩm: KPI, bộ lọc theo Depot/danh mục, phân bổ tồn kho từng depot & phân trang server
+            ├── ProductFormModal.tsx        # Hộp thoại Astryx Dialog thêm/sửa sản phẩm kèm nhập tồn kho riêng cho từng depot
             ├── DriverManagementPage.tsx    # Trang Quản lý Tài xế: KPI, tìm kiếm, lọc trạng thái/loại xe & phân trang server
             ├── DriverFormModal.tsx         # Hộp thoại Astryx Dialog thêm/sửa tài khoản & phương tiện tài xế
-            ├── DepotManagementPage.tsx     # Trang Quản lý Điểm xuất phát: KPI, bản đồ tổng quan các kho kèm vòng tròn phủ sóng 5 km, bảng CRUD & phân trang server
+            ├── DepotManagementPage.tsx     # Trang Quản lý Điểm xuất phát: KPI, bản đồ tổng quan 5 km, cột tồn kho từng depot, bảng CRUD & phân trang server
+            ├── DepotInventoryModal.tsx     # Hộp thoại xem, tìm kiếm & cập nhật nhanh số lượng tồn kho sản phẩm tại riêng một depot
             └── DepotFormModal.tsx          # Hộp thoại Astryx Dialog thêm/sửa điểm xuất phát kèm bản đồ Leaflet chọn tọa độ & vùng phủ 5 km
 ```
 
@@ -242,20 +245,21 @@ model DriverProfile {
 }
 
 model Store {
-  id        Int      @id @default(autoincrement())
-  code      String?  @unique
-  name      String
-  address   String
-  latitude  Float    // Điểm xuất phát (Depot) cho thuật toán VRP
-  longitude Float
-  phone     String   @default("")
-  isDefault Boolean  @default(false)
-  isActive  Boolean  @default(true)
-  notes     String?
-  orders    Order[]
-  trips     Trip[]
-  createdAt DateTime @default(now())
-  updatedAt DateTime @default(now()) @updatedAt
+  id          Int          @id @default(autoincrement())
+  code        String?      @unique
+  name        String
+  address     String
+  latitude    Float        // Điểm xuất phát (Depot / Kho hàng) cho thuật toán VRP
+  longitude   Float
+  phone       String       @default("")
+  isDefault   Boolean      @default(false)
+  isActive    Boolean      @default(true)
+  notes       String?
+  orders      Order[]
+  trips       Trip[]
+  depotStocks DepotStock[]
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @default(now()) @updatedAt
 }
 
 model Order {
@@ -303,16 +307,30 @@ model Trip {
 }
 
 model Product {
+  id          Int          @id @default(autoincrement())
+  sku         String       @unique
+  name        String
+  category    String       @default("Thực phẩm")
+  unit        String       @default("Cái")
+  price       Decimal      @db.Decimal(10, 2)
+  isActive    Boolean      @default(true)
+  depotStocks DepotStock[]
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+}
+
+model DepotStock {
   id        Int      @id @default(autoincrement())
-  sku       String   @unique
-  name      String
-  category  String   @default("Thực phẩm")
-  unit      String   @default("Cái")
-  price     Decimal  @db.Decimal(10, 2)
-  stock     Int      @default(0)
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
+  storeId   Int
+  store     Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  productId Int
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  quantity  Int      @default(0)
   updatedAt DateTime @updatedAt
+
+  @@unique([storeId, productId])
+  @@index([storeId])
+  @@index([productId])
 }
 ```
 
@@ -338,24 +356,24 @@ model Product {
 #### Quản lý Đơn hàng
 - `GET /api/orders`: Danh sách đơn hàng sắp xếp theo ngày tạo mới nhất (`createdAt DESC`, tie-breaker `id DESC`), hỗ trợ lọc `?status=NEW|PICKING|PACKED|DELIVERING|COMPLETED|FAILED`.
 - `GET /api/orders/:id`: Xem chi tiết đơn hàng và danh sách sản phẩm (`items`).
-- `POST /api/orders`: Tạo đơn hàng mới (nhận `storeId`, mặc định lấy điểm xuất phát `isDefault`). Kiểm tra điểm xuất phát đang hoạt động và **chặn cứng (`400`) nếu khoảng cách đường chim bay (Haversine) từ điểm xuất phát tới điểm giao > 5 km**. Sản phẩm trong đơn phải được chọn từ danh mục `Product`; backend tự tra cứu `productName`, `sku`, `price` từ danh mục và tự tính `totalAmount`.
-- `PUT /api/orders/:id`: Chỉnh sửa đơn hàng (chỉ cho phép ở các trạng thái trước điều phối: `NEW`, `PICKING`, `PACKED`; trả về `400` nếu đơn đã `DELIVERING`, `COMPLETED` hoặc `FAILED`). Hỗ trợ đổi điểm xuất phát (`storeId`), **chặn cứng (`400`) nếu khoảng cách Haversine > 5 km**, cập nhật thông tin khách hàng, tọa độ GPS và danh sách `OrderItem` (giữ nguyên `status`, tự tính lại `totalAmount`).
+- `POST /api/orders`: Tạo đơn hàng mới (nhận `storeId`, mặc định lấy điểm xuất phát `isDefault`). Kiểm tra điểm xuất phát đang hoạt động, **chặn cứng (`400`) nếu khoảng cách Haversine > 5 km**, đồng thời **kiểm tra và trừ tồn kho atomic tại `DepotStock` của depot được chọn** ngay trong Prisma transaction (trả `400` kèm danh sách sản phẩm thiếu hàng nếu không đủ tồn). Sản phẩm trong đơn phải được chọn từ danh mục `Product`; backend tự tra cứu `productName`, `sku`, `price` từ danh mục và tự tính `totalAmount`.
+- `PUT /api/orders/:id`: Chỉnh sửa đơn hàng (chỉ cho phép ở trạng thái `NEW`, `PICKING`, `PACKED`; trả về `400` nếu đơn đã `DELIVERING`, `COMPLETED` hoặc `FAILED`). Hỗ trợ đổi điểm xuất phát (`storeId`), **chặn cứng (`400`) nếu khoảng cách Haversine > 5 km**, tự động **hoàn tồn kho cũ về depot cũ và kiểm tra/trừ tồn kho mới tại depot mới** trong cùng transaction, đồng thời cập nhật thông tin khách hàng, tọa độ GPS và `OrderItem`.
 - `PATCH /api/orders/:id/start-picking`: Chuyển trạng thái đơn từ `NEW` ➔ `PICKING`.
 - `PATCH /api/orders/:id/complete-packing`: Chuyển trạng thái đơn từ `PICKING` ➔ `PACKED`.
 - `PATCH /api/orders/:id/assign-driver`: Gán, đổi hoặc bỏ gán tài xế trực tiếp cho một đơn hàng (chạy trong Prisma transaction):
-  - **Gán / Đổi tài xế (`{ "driverId": 3 }`):** Hỗ trợ đơn ở trạng thái `PACKED`, `DELIVERING`, hoặc `FAILED` (giao lại). Chỉ chấp nhận tài xế đang hoạt động (`isActive: true`) và không ở trạng thái `OFFLINE`. Tự động ghép đơn vào chuyến đang hoạt động (`ASSIGNED`/`IN_TRANSIT`) của tài xế ở cuối lộ trình (`max(deliverySequence) + 1`) hoặc tạo `Trip` mới, chuyển đơn sang `DELIVERING` và cập nhật tài xế sang `ON_DELIVERY`.
+  - **Gán / Đổi tài xế (`{ "driverId": 3 }`):** Hỗ trợ đơn ở trạng thái `PACKED`, `DELIVERING`, hoặc `FAILED` (giao lại — tự động kiểm tra và trừ lại tồn kho tại depot của đơn). Chỉ chấp nhận tài xế đang hoạt động (`isActive: true`) và không ở trạng thái `OFFLINE`. Tự động ghép đơn vào chuyến đang hoạt động (`ASSIGNED`/`IN_TRANSIT`) của tài xế ở cuối lộ trình (`max(deliverySequence) + 1`) hoặc tạo `Trip` mới, chuyển đơn sang `DELIVERING` và cập nhật tài xế sang `ON_DELIVERY`.
   - **Bỏ gán tài xế (`{ "driverId": null }`):** Hỗ trợ đơn đang `DELIVERING`; gỡ `tripId`/`deliverySequence` và đưa đơn về `PACKED`.
   - **Đồng bộ chuyến cũ:** Khi đổi hoặc bỏ gán tài xế, hệ thống tự đánh lại số thứ tự `1..N` cho các điểm dừng còn lại của chuyến cũ, xóa `totalDistance` cũ, tự xóa chuyến rỗng (hoặc đóng `COMPLETED` nếu không còn đơn `DELIVERING`) và chuyển tài xế cũ về `AVAILABLE` nếu không còn chuyến hoạt động khác.
 - `POST /api/orders/bulk-action`: Thực hiện **thao tác hàng loạt** trên danh sách đơn hàng (`{ "action": "...", "orderIds": [1, 2, 3], "driverId"?: 3 }`) trong một Prisma transaction:
-  - **Các thao tác hỗ trợ:** `START_PICKING` (`NEW` ➔ `PICKING`), `COMPLETE_PACKING` (`PICKING` ➔ `PACKED`), `ASSIGN_DRIVER` (`PACKED`/`DELIVERING`/`FAILED` ➔ `DELIVERING`, ghép vào chuyến đang hoạt động của tài xế hoặc tạo 1 chuyến mới), `UNASSIGN_DRIVER` (`DELIVERING` ➔ `PACKED`), `COMPLETE_DELIVERY` (`DELIVERING` ➔ `COMPLETED`), và `FAIL_DELIVERY` (`DELIVERING` ➔ `FAILED`).
+  - **Các thao tác hỗ trợ:** `START_PICKING` (`NEW` ➔ `PICKING`), `COMPLETE_PACKING` (`PICKING` ➔ `PACKED`), `ASSIGN_DRIVER` (`PACKED`/`DELIVERING`/`FAILED` ➔ `DELIVERING`, tự trừ lại tồn kho với đơn `FAILED`), `UNASSIGN_DRIVER` (`DELIVERING` ➔ `PACKED`), `COMPLETE_DELIVERY` (`DELIVERING` ➔ `COMPLETED`), và `FAIL_DELIVERY` (`DELIVERING` ➔ `FAILED`, tự hoàn tồn kho về depot).
   - **Kiểm tra điều kiện & đồng bộ:** Kiểm tra trạng thái hợp lệ cho từng đơn phía server, tự động cập nhật tất cả đơn đủ điều kiện, đồng bộ trạng thái/thứ tự điểm dừng của các `Trip` và trạng thái `DriverProfile` liên quan một lần, đồng thời trả về `{ updatedCount, updatedOrders, skipped: [{ id, orderCode, reason }], message }`.
 
-#### Quản lý Sản phẩm (Product Catalog & Server-Side Pagination)
-- `GET /api/products`: Danh sách sản phẩm hỗ trợ phân trang phía server (`?page=1&limit=20`, giới hạn `1–100`), tìm kiếm theo tên/SKU/danh mục (`?search=`), lọc danh mục (`?category=`), và lọc sản phẩm đang bán (`?activeOnly=true`). Trả về `data`, `pagination` (`page`, `limit`, `total`, `totalPages`) và `summary` (`totalProducts`, `activeProducts`, `lowStockProducts`, `totalStock`).
-- `GET /api/products/:id`: Xem chi tiết một sản phẩm.
-- `POST /api/products`: Tạo sản phẩm mới (tự sinh mã `SKU-...` nếu bỏ trống, kiểm tra trùng SKU với mã lỗi `409`).
-- `PUT /api/products/:id`: Cập nhật thông tin sản phẩm (SKU, tên, danh mục, đơn vị tính, giá bán, tồn kho, trạng thái kinh doanh `isActive`).
-- `DELETE /api/products/:id`: Xóa sản phẩm khỏi danh mục.
+#### Quản lý Sản phẩm & Tồn kho theo Depot (Product Catalog & Per-Depot Inventory)
+- `GET /api/products`: Danh sách sản phẩm hỗ trợ phân trang phía server (`?page=1&limit=20`, giới hạn `1–100`), tìm kiếm theo tên/SKU/danh mục (`?search=`), lọc danh mục (`?category=`), lọc theo depot (`?storeId=1` hoặc `ALL`), và lọc sản phẩm đang bán (`?activeOnly=true`). Mỗi sản phẩm trả về `stock` (tồn tại depot đang lọc hoặc tổng tất cả depot), `totalStock` và mảng `depotStocks` chi tiết theo từng depot; kèm `pagination` và `summary` (`totalProducts`, `activeProducts`, `lowStockProducts`, `totalStock`) tính theo depot đang chọn.
+- `GET /api/products/:id`: Xem chi tiết một sản phẩm kèm phân bổ `depotStocks` (hỗ trợ `?storeId=`).
+- `POST /api/products`: Tạo sản phẩm mới (tự sinh mã `SKU-...` nếu bỏ trống, kiểm tra trùng SKU với mã lỗi `409`) kèm phân bổ tồn kho ban đầu `depotStocks: [{ storeId, quantity }]`.
+- `PUT /api/products/:id`: Cập nhật thông tin sản phẩm (SKU, tên, danh mục, đơn vị tính, giá bán, `depotStocks` theo từng depot, trạng thái kinh doanh `isActive`).
+- `DELETE /api/products/:id`: Xóa sản phẩm khỏi danh mục (cascade xóa các bản ghi `DepotStock`).
 
 #### Quản lý Tài xế (Driver Management & Fleet Status)
 - `GET /api/drivers`: Danh sách tài xế (gộp thông tin `User` + `DriverProfile` + chuyến đang chạy `activeTrip` + `totalTrips`), hỗ trợ phân trang phía server (`?page=1&limit=20`), tìm kiếm theo tên/email/SĐT/biển số (`?search=`), lọc trạng thái (`?status=AVAILABLE|ON_DELIVERY|OFFLINE`), lọc loại xe (`?vehicleType=`), và lọc nhanh tài xế sẵn sàng (`?availableOnly=true`). Trả về `data`, `pagination` và `summary` (`totalDrivers`, `availableDrivers`, `onDeliveryDrivers`, `inactiveDrivers`).
@@ -364,9 +382,11 @@ model Product {
 - `PUT /api/drivers/:id`: Cập nhật thông tin tài khoản, mật khẩu tùy chọn, phương tiện, trạng thái vận hành và cờ hoạt động `isActive`.
 - `DELETE /api/drivers/:id`: Chặn xóa (`400`) nếu tài xế đang có chuyến `ASSIGNED` hoặc `IN_TRANSIT`; với các chuyến đã hoàn tất, tự động gỡ liên kết (`Trip.driverId = null`) trước khi xóa `User` (cascade sang `DriverProfile`).
 
-#### Quản lý Điểm xuất phát (Multi-Depot / Store Management)
-- `GET /api/stores`: Danh sách điểm xuất phát (kèm `ordersCount`, `tripsCount`), hỗ trợ phân trang phía server (`?page=1&limit=20`), tìm kiếm theo mã kho/tên/địa chỉ/SĐT (`?search=`), lọc trạng thái (`?status=ALL|ACTIVE|INACTIVE`) hoặc chỉ lấy điểm đang hoạt động (`?activeOnly=true`). Trả về `data`, `pagination` và `summary` (`totalStores`, `activeStores`, `inactiveStores`, `defaultStoreId`, `defaultStoreName`, `totalOrders`, `totalTrips`).
-- `GET /api/stores/:id`: Xem chi tiết một điểm xuất phát.
+#### Quản lý Điểm xuất phát & Kho hàng (Multi-Depot / Store Management)
+- `GET /api/stores`: Danh sách điểm xuất phát (kèm `ordersCount`, `tripsCount`, `totalStock`, `inStockSkuCount`, `lowStockSkuCount`), hỗ trợ phân trang phía server (`?page=1&limit=20`), tìm kiếm theo mã kho/tên/địa chỉ/SĐT (`?search=`), lọc trạng thái (`?status=ALL|ACTIVE|INACTIVE`) hoặc chỉ lấy điểm đang hoạt động (`?activeOnly=true`). Trả về `data`, `pagination` và `summary`.
+- `GET /api/stores/:id`: Xem chi tiết một điểm xuất phát kèm thống kê tồn kho.
+- `GET /api/stores/:id/inventory`: Xem danh sách sản phẩm và tồn kho tại riêng depot `:id` (hỗ trợ phân trang `?page=1&limit=15`, tìm kiếm `?search=`, lọc danh mục `?category=` và mức tồn `?stockFilter=ALL|IN_STOCK|LOW_STOCK|OUT_OF_STOCK`).
+- `PUT /api/stores/:id/inventory`: Cập nhật nhanh hàng loạt tồn kho sản phẩm tại depot `:id` (`{ "items": [{ "productId": 1, "quantity": 50 }] }`) trong Prisma transaction.
 - `POST /api/stores`: Tạo điểm xuất phát mới (tự sinh mã `DEP-001`, `DEP-002`... nếu bỏ trống, kiểm tra trùng mã & tọa độ GPS hợp lệ). Nếu chọn `isDefault: true` (hoặc là kho đầu tiên), tự động đồng bộ duy nhất 1 điểm mặc định trong Prisma transaction và đặt `isActive: true`.
 - `PUT /api/stores/:id`: Cập nhật thông tin, tọa độ, trạng thái hoạt động và cờ mặc định; chặn tắt hoạt động hoặc bỏ mặc định khi chưa chọn điểm khác làm mặc định.
 - `PATCH /api/stores/:id/set-default`: Đặt nhanh một điểm xuất phát làm mặc định của hệ thống (tự động kích hoạt `isActive: true` và gỡ `isDefault` ở điểm cũ trong transaction).
@@ -458,8 +478,8 @@ Giao diện đơn trang (SPA) tại `http://localhost:5173` được xây dựng
      - Sử dụng cấu trúc Astryx `Dialog` + `Layout` (`LayoutContent` / `LayoutFooter`) để nút Lưu/Hủy luôn cố định ở chân hộp thoại.
      - **Chọn Điểm xuất phát & Kiểm tra bán kính 5 km:** Dropdown chọn kho xuất phát (tự động điền sẵn kho mặc định), tính trực tiếp khoảng cách Haversine từ kho đến điểm giao, vẽ vòng tròn bán kính **5 km** trên bản đồ và chặn cứng nút Lưu nếu vượt quá 5 km.
      - **Bản đồ mini Leaflet tương tác:** Click lên bản đồ hoặc kéo ghim xanh để chọn tọa độ giao hàng, đồng bộ 2 chiều với ô nhập `Latitude` / `Longitude`.
-     - **Chọn sản phẩm bắt buộc từ danh mục:** Ô tìm kiếm theo tên hoặc mã SKU gọi trực tiếp API danh mục sản phẩm đang kinh doanh; bấm **Thêm** để đưa vào đơn (tự tăng `Qty` nếu đã có).
-     - **Bảng Order Item 4 cột:** `Tên sản phẩm`, `SKU`, `Giá` (chỉ đọc) và `Qty` (cột duy nhất cho phép sửa, kèm nút xóa dòng và tổng tiền tự tính).
+     - **Chọn sản phẩm theo tồn kho tại Depot đang chọn:** Ô tìm kiếm theo tên hoặc mã SKU gọi API sản phẩm theo `storeId` của depot đang chọn và hiển thị tồn kho thực tế tại depot đó; sản phẩm hết hàng (`0`) hiển thị nhãn **"Hết hàng"** và khóa nút **Thêm**. Nếu đổi depot làm số lượng vượt quá tồn kho tại depot mới, hệ thống giữ nguyên danh sách, hiện cảnh báo đỏ tại từng dòng và chặn lưu cho tới khi điều chỉnh.
+     - **Bảng Order Item 4 cột:** `Tên sản phẩm` (kèm tồn kho tại depot / cảnh báo vượt tồn), `SKU`, `Giá` (chỉ đọc) và `Qty` (cột duy nhất cho phép sửa, kèm nút xóa dòng và tổng tiền tự tính).
 3. **Trang Quản Lý Chuyến Xe (`#trips`, `TripManagementPage.tsx`, `CreateTripModal.tsx`, `ReassignTripDriverModal.tsx` & `RouteMap.tsx`):**
    - **4 thẻ KPI tổng quan:** Tổng chuyến xe, Chờ xuất phát (`ASSIGNED`), Đang giao hàng (`IN_TRANSIT`), Hoàn thành (`COMPLETED`).
    - **Bố cục Master-Detail 2 cột:**
@@ -472,20 +492,21 @@ Giao diện đơn trang (SPA) tại `http://localhost:5173` được xây dựng
      - `WAREHOUSE`: Xem chuyến xe và tạo/tối ưu chuyến mới từ các đơn `PACKED`.
      - `DRIVER`: Xem chuyến xe, bấm **Bắt đầu giao** (`IN_TRANSIT`) và xác nhận **Giao xong / Thất bại** từng điểm dừng.
 4. **Trang Quản Lý Sản Phẩm (`ProductManagementPage.tsx` & `ProductFormModal.tsx`):**
-   - **4 thẻ KPI tổng quan:** Tổng sản phẩm, Đang kinh doanh, Sắp hết hàng (`<= 10`), Tổng số lượng tồn kho (tính toàn kho từ API `summary`).
-   - **Tìm kiếm & Lọc:** Tìm kiếm theo tên/SKU (debounce `250ms`) và lọc theo danh mục sản phẩm.
+   - **4 thẻ KPI tổng quan:** Tổng sản phẩm, Đang kinh doanh, Sắp hết hàng (`<= 10`), Tổng số lượng tồn kho (tự động cập nhật theo Depot đang lọc hoặc tổng tất cả depot).
+   - **Tìm kiếm & Lọc theo Depot:** Tìm kiếm theo tên/SKU (debounce `250ms`), lọc theo **Depot** (`Tất cả depot` hoặc chọn 1 depot cụ thể) và lọc theo danh mục; khi xem `Tất cả depot`, cột tồn kho hiển thị tổng tồn kèm phân bổ chi tiết từng mã depot (`DEP-001`, `DEP-002`...).
    - **Phân trang phía server (`@astryxdesign/core/Pagination`):** Điều hướng theo số trang kèm dấu `...`, nút Trước/Sau và bộ chọn số dòng mỗi trang (`10 / 20 / 50 / 100`).
-   - **Thao tác CRUD:** Thêm sản phẩm, chỉnh sửa (`ProductFormModal.tsx`), bật/tắt trạng thái đang bán và xóa sản phẩm có hộp thoại xác nhận (dành cho `ADMIN` & `WAREHOUSE`; `DRIVER` ở chế độ chỉ xem).
+   - **Thao tác CRUD:** Thêm sản phẩm, chỉnh sửa (`ProductFormModal.tsx` cho phép nhập tồn kho riêng cho từng depot kèm tổng tồn tự tính), bật/tắt trạng thái đang bán và xóa sản phẩm có hộp thoại xác nhận (dành cho `ADMIN` & `WAREHOUSE`; `DRIVER` ở chế độ chỉ xem).
 5. **Trang Quản Lý Tài Xế (`DriverManagementPage.tsx` & `DriverFormModal.tsx`):**
    - **4 thẻ KPI tổng quan:** Tổng tài xế, Đang sẵn sàng (`AVAILABLE`), Đang giao hàng (`ON_DELIVERY`), Ngừng hoạt động (tính từ API `summary`).
    - **Tìm kiếm & Lọc:** Tìm kiếm theo tên/SĐT/email/biển số (debounce `250ms`), lọc theo trạng thái vận hành (`AVAILABLE`, `ON_DELIVERY`, `OFFLINE`) và loại xe (`Xe máy`, `Xe tải nhỏ`, `Xe van`).
    - **Thông tin chuyến giao & Phân trang server:** Hiển thị mã chuyến đang chạy (`TRIP-...`) cùng tổng số chuyến của mỗi tài xế, hỗ trợ phân trang phía server (`10 / 20 / 50 / 100`).
    - **Phân quyền & Thao tác CRUD:** Chỉ `ADMIN` được thêm, chỉnh sửa (`DriverFormModal.tsx`), bật/tắt hoạt động và xóa tài xế (tự động khóa nút xóa khi tài xế đang có chuyến hoạt động); `WAREHOUSE` và `DRIVER` ở chế độ chỉ xem.
-6. **Trang Quản Lý Điểm Xuất Phát (`#depots`, `DepotManagementPage.tsx` & `DepotFormModal.tsx`):**
+6. **Trang Quản Lý Điểm Xuất Phát / Kho Hàng (`#depots`, `DepotManagementPage.tsx`, `DepotFormModal.tsx` & `DepotInventoryModal.tsx`):**
    - **4 thẻ KPI tổng quan:** Tổng điểm xuất phát, Đang hoạt động, Điểm xuất phát mặc định (kèm bán kính phục vụ tối đa 5 km) và tổng Đơn hàng / Chuyến xe.
    - **Bản đồ tổng quan Leaflet:** Hiển thị toàn bộ các điểm xuất phát (đánh dấu nổi bật kho mặc định ⭐); click vào một điểm trên bản đồ hoặc bảng danh sách để focus và xem vòng tròn phủ sóng **5 km**.
+   - **Quản lý tồn kho tại từng Depot:** Bảng danh sách hiển thị tổng số lượng tồn kho và số SKU còn hàng của từng depot; nút **Tồn kho** mở `DepotInventoryModal.tsx` để tìm kiếm, lọc theo trạng thái tồn (`Còn hàng`, `Sắp hết`, `Hết hàng`) và cập nhật nhanh hàng loạt số lượng tồn kho cho depot đó (`ADMIN` & `WAREHOUSE` được chỉnh sửa; `DRIVER` chỉ xem).
    - **Tìm kiếm, Lọc & Phân trang server:** Tìm theo mã kho, tên, địa chỉ, SĐT (debounce `250ms`), lọc trạng thái (`Tất cả`, `Đang hoạt động`, `Ngừng hoạt động`) và phân trang phía server (`10 / 20 / 50`).
-   - **Phân quyền & Thao tác CRUD:** Chỉ `ADMIN` được thêm, chỉnh sửa (`DepotFormModal.tsx` có bản đồ chọn tọa độ + vòng tròn 5 km), đặt mặc định, bật/tắt hoạt động và xóa (chặn xóa kho mặc định hoặc kho đã có đơn hàng/chuyến xe gắn vào); `WAREHOUSE` và `DRIVER` ở chế độ chỉ xem.
+   - **Phân quyền & Thao tác CRUD:** Chỉ `ADMIN` được thêm, chỉnh sửa (`DepotFormModal.tsx` có bản đồ chọn tọa độ + vòng tròn 5 km), đặt mặc định, bật/tắt hoạt động và xóa (chặn xóa kho mặc định hoặc kho đã có đơn hàng/chuyến xe gắn vào); `WAREHOUSE` và `DRIVER` ở chế độ chỉ xem thông tin kho.
 
 ---
 
@@ -581,6 +602,14 @@ curl -X POST http://localhost:3000/api/stores \
   -d '{"name":"Kho Quận 1","address":"123 Lê Lợi, Quận 1, TP.HCM","latitude":10.7725,"longitude":106.6980,"phone":"02838221100"}'
 
 curl -X PATCH http://localhost:3000/api/stores/2/set-default
+
+# 12. Xem & cập nhật tồn kho sản phẩm theo từng Depot
+curl "http://localhost:3000/api/products?page=1&limit=20&storeId=1"
+curl "http://localhost:3000/api/stores/1/inventory?page=1&limit=15&stockFilter=LOW_STOCK"
+
+curl -X PUT http://localhost:3000/api/stores/1/inventory \
+  -H "Content-Type: application/json" \
+  -d '{"items": [{"productId": 1, "quantity": 120}]}'
 ```
 
 #### Nạp nhanh 1.000 sản phẩm mẫu để kiểm thử phân trang:

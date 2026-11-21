@@ -179,7 +179,7 @@ export function DepotFormModal({
                   </div>
                   <TextInput
                     label="Số điện thoại liên hệ"
-                    placeholder="VD: 02837753232"
+                    placeholder="VD: 02812345678"
                     value={form.phone}
                     onChange={(val) => onFormChange({ ...form, phone: val })}
                     size="sm"

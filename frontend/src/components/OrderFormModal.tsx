@@ -158,35 +158,56 @@ export function OrderFormModal({
   );
 
   const [catalogSearch, setCatalogSearch] = useState('');
-  const [catalogResults, setCatalogResults] = useState<Product[]>(products);
+  const [catalogResults, setCatalogResults] = useState<Product[]>([]);
   const [searchingCatalog, setSearchingCatalog] = useState(false);
+  const [depotStockMap, setDepotStockMap] = useState<Record<number, number>>({});
 
+  // Seed depotStockMap from products prop if depotStocks breakdown is already present
   useEffect(() => {
     if (!isOpen) {
       setCatalogSearch('');
-      setCatalogResults(products);
+      setCatalogResults([]);
+      setDepotStockMap({});
       return;
     }
 
+    const seeded: Record<number, number> = {};
+    for (const p of products) {
+      const ds = p.depotStocks?.find((d) => d.storeId === selectedStore.id);
+      if (ds) {
+        seeded[p.id] = ds.quantity;
+      }
+    }
+    setDepotStockMap(seeded);
+  }, [isOpen, selectedStore.id, products]);
+
+  // Always fetch catalog results scoped to the currently selected depot
+  useEffect(() => {
+    if (!isOpen) return;
+
     let cancelled = false;
     const trimmed = catalogSearch.trim();
-    if (!trimmed) {
-      setCatalogResults(products.filter((p) => p.isActive).slice(0, 20));
-      setSearchingCatalog(false);
-      return;
-    }
+    const delay = trimmed ? 200 : 0;
 
     const timer = window.setTimeout(async () => {
       setSearchingCatalog(true);
       try {
         const res = await fetchProducts({
           activeOnly: true,
-          search: trimmed,
+          storeId: selectedStore.id,
+          ...(trimmed ? { search: trimmed } : {}),
           page: 1,
-          limit: 15,
+          limit: trimmed ? 15 : 20,
         });
         if (!cancelled) {
           setCatalogResults(res.items);
+          setDepotStockMap((prev) => {
+            const next = { ...prev };
+            for (const p of res.items) {
+              next[p.id] = p.stock;
+            }
+            return next;
+          });
         }
       } catch {
         if (!cancelled) {
@@ -197,13 +218,101 @@ export function OrderFormModal({
           setSearchingCatalog(false);
         }
       }
-    }, 200);
+    }, delay);
 
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [isOpen, catalogSearch, products]);
+  }, [isOpen, catalogSearch, selectedStore.id]);
+
+  // Ensure any already-selected items in form.items have their stock loaded for selectedStore.id
+  useEffect(() => {
+    if (!isOpen || form.items.length === 0) return;
+
+    const missingItems = form.items.filter(
+      (it) => it.productId && depotStockMap[it.productId] === undefined
+    );
+    if (missingItems.length === 0) return;
+
+    let cancelled = false;
+    (async () => {
+      const updates: Record<number, number> = {};
+      for (const item of missingItems) {
+        if (!item.productId) continue;
+        const query = item.sku && item.sku !== '—' ? item.sku : item.productName;
+        if (!query) continue;
+        try {
+          const res = await fetchProducts({
+            storeId: selectedStore.id,
+            search: query,
+            page: 1,
+            limit: 5,
+          });
+          const match = res.items.find((p) => p.id === item.productId);
+          if (match) {
+            updates[item.productId] = match.stock;
+          }
+        } catch {
+          // Ignore individual lookup errors; server validates on submit
+        }
+      }
+      if (!cancelled && Object.keys(updates).length > 0) {
+        setDepotStockMap((prev) => ({ ...prev, ...updates }));
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, selectedStore.id, form.items, depotStockMap]);
+
+  // Original quantities already held by this order if editing on the same depot
+  const originalReservedByProductId = useMemo(() => {
+    const map = new Map<number, number>();
+    if (isEdit && editingOrder && editingOrder.storeId === selectedStore.id) {
+      for (const it of editingOrder.items) {
+        if (it.productId) {
+          map.set(it.productId, (map.get(it.productId) ?? 0) + it.quantity);
+        }
+      }
+    }
+    return map;
+  }, [isEdit, editingOrder, selectedStore.id]);
+
+  const getEffectiveAvailable = (productId: number, rawDepotStock?: number): number | undefined => {
+    const base = rawDepotStock !== undefined ? rawDepotStock : depotStockMap[productId];
+    if (base === undefined) return undefined;
+    return base + (originalReservedByProductId.get(productId) ?? 0);
+  };
+
+  // Requested quantities per productId in the current form
+  const requestedByProductId = useMemo(() => {
+    const map = new Map<number, number>();
+    for (const it of form.items) {
+      if (it.productId) {
+        const qty = Math.max(0, Number(it.quantity) || 0);
+        map.set(it.productId, (map.get(it.productId) ?? 0) + qty);
+      }
+    }
+    return map;
+  }, [form.items]);
+
+  const stockIssuesByIndex = useMemo(() => {
+    const issues = new Map<number, { available: number; requested: number }>();
+    form.items.forEach((item, idx) => {
+      if (!item.productId) return;
+      const available = getEffectiveAvailable(item.productId);
+      if (available === undefined) return;
+      const requested = requestedByProductId.get(item.productId) ?? (Number(item.quantity) || 0);
+      if (requested > available) {
+        issues.set(idx, { available, requested });
+      }
+    });
+    return issues;
+  }, [form.items, depotStockMap, originalReservedByProductId, requestedByProductId]);
+
+  const hasStockConflict = stockIssuesByIndex.size > 0;
 
   const parsedLat = Number(form.latitude);
   const parsedLng = Number(form.longitude);
@@ -499,12 +608,12 @@ export function OrderFormModal({
 
               {/* Product Catalog Picker (Strict Catalog Selection Only) */}
               <div className="space-y-2.5">
-                <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
                   <Text type="label" size="sm">
                     Chọn sản phẩm từ danh mục
                   </Text>
                   <Text type="supporting" size="2xs">
-                    Tìm theo tên hoặc mã SKU để thêm vào đơn
+                    Hiển thị tồn kho thực tế tại {selectedStore.name}
                   </Text>
                 </div>
 
@@ -520,7 +629,7 @@ export function OrderFormModal({
                   onChange={setCatalogSearch}
                 />
 
-                <div className="max-h-[150px] overflow-y-auto rounded-lg border border-border divide-y divide-border bg-secondary/15">
+                <div className="max-h-[170px] overflow-y-auto rounded-lg border border-border divide-y divide-border bg-secondary/15">
                   {searchingCatalog ? (
                     <div className="py-4 text-center">
                       <Text type="supporting" size="xsm">
@@ -534,35 +643,55 @@ export function OrderFormModal({
                       </Text>
                     </div>
                   ) : (
-                    catalogResults.map((product) => (
-                      <div
-                        key={product.id}
-                        className="px-3 py-2 flex items-center justify-between gap-3 hover:bg-secondary/40 transition-colors"
-                      >
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <Text type="label" size="xsm" maxLines={1}>
-                              {product.name}
-                            </Text>
-                            <Text type="code" size="2xs">
-                              {product.sku}
+                    catalogResults.map((product) => {
+                      const effectiveStock = getEffectiveAvailable(product.id, product.stock) ?? product.stock;
+                      const alreadyInOrder = requestedByProductId.get(product.id) ?? 0;
+                      const isOutOfStock = effectiveStock <= 0;
+                      const isMaxReached = !isOutOfStock && alreadyInOrder >= effectiveStock;
+
+                      return (
+                        <div
+                          key={product.id}
+                          className={`px-3 py-2 flex items-center justify-between gap-3 transition-colors ${
+                            isOutOfStock ? 'opacity-65 bg-secondary/20' : 'hover:bg-secondary/40'
+                          }`}
+                        >
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <Text type="label" size="xsm" maxLines={1}>
+                                {product.name}
+                              </Text>
+                              <Text type="code" size="2xs">
+                                {product.sku}
+                              </Text>
+                              {isOutOfStock && (
+                                <Badge label="Hết hàng" variant="error" />
+                              )}
+                            </div>
+                            <Text type="supporting" size="2xs" hasTabularNumbers>
+                              {formatVND(product.price)} / {product.unit} • Tồn tại depot:{' '}
+                              {effectiveStock}
+                              {alreadyInOrder > 0 ? ` (đã chọn ${alreadyInOrder})` : ''}
                             </Text>
                           </div>
-                          <Text type="supporting" size="2xs" hasTabularNumbers>
-                            {formatVND(product.price)} / {product.unit} • Tồn kho:{' '}
-                            {product.stock}
-                          </Text>
+                          <Button
+                            label={
+                              isOutOfStock
+                                ? 'Hết hàng'
+                                : isMaxReached
+                                  ? 'Đã tối đa'
+                                  : 'Thêm'
+                            }
+                            type="button"
+                            variant="secondary"
+                            size="sm"
+                            icon={!isOutOfStock && !isMaxReached ? <Plus className="w-3.5 h-3.5" /> : undefined}
+                            isDisabled={isOutOfStock || isMaxReached}
+                            onClick={() => handleSelectProduct(product)}
+                          />
                         </div>
-                        <Button
-                          label="Thêm"
-                          type="button"
-                          variant="secondary"
-                          size="sm"
-                          icon={<Plus className="w-3.5 h-3.5" />}
-                          onClick={() => handleSelectProduct(product)}
-                        />
-                      </div>
-                    ))
+                      );
+                    })
                   )}
                 </div>
               </div>
@@ -591,51 +720,86 @@ export function OrderFormModal({
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {form.items.map((item, idx) => (
-                          <TableRow key={`${item.productId ?? item.sku}-${idx}`}>
-                            <TableCell>
-                              <Text type="label" size="sm">
-                                {item.productName}
-                              </Text>
-                            </TableCell>
-                            <TableCell>
-                              <Text type="code" size="xsm">
-                                {item.sku || '—'}
-                              </Text>
-                            </TableCell>
-                            <TableCell>
-                              <Text type="supporting" size="sm" hasTabularNumbers>
-                                {formatVND(item.price)}
-                              </Text>
-                            </TableCell>
-                            <TableCell>
-                              <div className="flex items-center gap-2">
-                                <div className="w-20">
-                                  <TextInput
-                                    label={`Số lượng cho ${item.productName}`}
-                                    isLabelHidden
-                                    isRequired
-                                    inputMode="numeric"
+                        {form.items.map((item, idx) => {
+                          const stockIssue = stockIssuesByIndex.get(idx);
+                          const availableAtDepot = item.productId
+                            ? getEffectiveAvailable(item.productId)
+                            : undefined;
+
+                          return (
+                            <TableRow key={`${item.productId ?? item.sku}-${idx}`}>
+                              <TableCell>
+                                <div className="flex flex-col gap-0.5">
+                                  <Text type="label" size="sm">
+                                    {item.productName}
+                                  </Text>
+                                  {stockIssue ? (
+                                    <div className="flex items-center gap-1 text-red-600 dark:text-red-400">
+                                      <AlertTriangle className="w-3 h-3 shrink-0" />
+                                      <span className="text-[11px] font-medium">
+                                        Vượt tồn kho tại {selectedStore.name} (còn{' '}
+                                        {stockIssue.available}, cần {stockIssue.requested})
+                                      </span>
+                                    </div>
+                                  ) : availableAtDepot !== undefined ? (
+                                    <Text type="supporting" size="2xs" hasTabularNumbers>
+                                      Tồn tại depot: {availableAtDepot}
+                                    </Text>
+                                  ) : null}
+                                </div>
+                              </TableCell>
+                              <TableCell>
+                                <Text type="code" size="xsm">
+                                  {item.sku || '—'}
+                                </Text>
+                              </TableCell>
+                              <TableCell>
+                                <Text type="supporting" size="sm" hasTabularNumbers>
+                                  {formatVND(item.price)}
+                                </Text>
+                              </TableCell>
+                              <TableCell>
+                                <div className="flex items-center gap-2">
+                                  <div className="w-20">
+                                    <TextInput
+                                      label={`Số lượng cho ${item.productName}`}
+                                      isLabelHidden
+                                      isRequired
+                                      inputMode="numeric"
+                                      size="sm"
+                                      width="100%"
+                                      value={item.quantity}
+                                      onChange={(val) => handleUpdateQty(idx, val)}
+                                    />
+                                  </div>
+                                  <IconButton
+                                    label={`Xóa ${item.productName}`}
+                                    tooltip="Xóa sản phẩm khỏi đơn"
+                                    variant="destructive"
                                     size="sm"
-                                    width="100%"
-                                    value={item.quantity}
-                                    onChange={(val) => handleUpdateQty(idx, val)}
+                                    icon={<Trash2 className="w-3.5 h-3.5" />}
+                                    onClick={() => handleRemoveItem(idx)}
                                   />
                                 </div>
-                                <IconButton
-                                  label={`Xóa ${item.productName}`}
-                                  tooltip="Xóa sản phẩm khỏi đơn"
-                                  variant="destructive"
-                                  size="sm"
-                                  icon={<Trash2 className="w-3.5 h-3.5" />}
-                                  onClick={() => handleRemoveItem(idx)}
-                                />
-                              </div>
-                            </TableCell>
-                          </TableRow>
-                        ))}
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
                       </TableBody>
                     </Table>
+                  </div>
+                )}
+
+                {hasStockConflict && (
+                  <div className="flex items-start gap-2 px-3 py-2 rounded-lg border border-red-500/40 bg-red-500/10 text-red-600 dark:text-red-400">
+                    <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                    <Text type="supporting" size="xsm">
+                      Một số sản phẩm vượt quá tồn kho tại depot{' '}
+                      <Text type="label" size="xsm">
+                        {selectedStore.name}
+                      </Text>
+                      . Vui lòng giảm số lượng, xóa sản phẩm hoặc chọn depot khác trước khi lưu.
+                    </Text>
                   </div>
                 )}
 
@@ -668,7 +832,7 @@ export function OrderFormModal({
                 variant="primary"
                 size="sm"
                 isLoading={submitting}
-                isDisabled={isOutOfRange}
+                isDisabled={isOutOfRange || hasStockConflict}
               />
             </div>
           </LayoutFooter>

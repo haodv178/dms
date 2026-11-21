@@ -2,6 +2,11 @@ import { Request, Response } from 'express';
 import { DriverStatus, OrderStatus, Prisma, Role } from '@prisma/client';
 import prisma from '../lib/prisma';
 import { checkDeliveryRadius, MAX_DELIVERY_DISTANCE_KM } from '../lib/geo';
+import {
+  InsufficientStockError,
+  deductDepotStock,
+  restoreDepotStock,
+} from '../lib/inventory';
 
 const EDITABLE_ORDER_STATUSES: OrderStatus[] = [
   OrderStatus.NEW,
@@ -269,22 +274,26 @@ export const createOrder = async (req: Request, res: Response) => {
       0
     );
 
-    const newOrder = await prisma.order.create({
-      data: {
-        orderCode: orderCode || `ORD-${Math.floor(100 + Math.random() * 900)}-${Date.now().toString().slice(-3)}`,
-        storeId: targetStore.id,
-        customerName: String(customerName).trim(),
-        customerPhone: (customerPhone || '0900000000').trim(),
-        customerAddress: String(customerAddress).trim(),
-        latitude: parsedLat,
-        longitude: parsedLng,
-        totalAmount: computedTotal,
-        status: OrderStatus.NEW,
-        items: {
-          create: normalizedItems,
+    const newOrder = await prisma.$transaction(async (tx) => {
+      await deductDepotStock(tx, targetStore.id, targetStore.name, normalizedItems);
+
+      return tx.order.create({
+        data: {
+          orderCode: orderCode || `ORD-${Math.floor(100 + Math.random() * 900)}-${Date.now().toString().slice(-3)}`,
+          storeId: targetStore.id,
+          customerName: String(customerName).trim(),
+          customerPhone: (customerPhone || '0900000000').trim(),
+          customerAddress: String(customerAddress).trim(),
+          latitude: parsedLat,
+          longitude: parsedLng,
+          totalAmount: computedTotal,
+          status: OrderStatus.NEW,
+          items: {
+            create: normalizedItems,
+          },
         },
-      },
-      include: ORDER_WITH_RELATIONS_INCLUDE,
+        include: ORDER_WITH_RELATIONS_INCLUDE,
+      });
     });
 
     res.status(201).json({
@@ -293,6 +302,13 @@ export const createOrder = async (req: Request, res: Response) => {
       data: newOrder,
     });
   } catch (error: any) {
+    if (error instanceof InsufficientStockError) {
+      return res.status(error.statusCode).json({
+        success: false,
+        message: error.message,
+        details: error.details,
+      });
+    }
     res.status(500).json({ success: false, message: error.message });
   }
 };
@@ -402,28 +418,28 @@ export const updateOrder = async (req: Request, res: Response) => {
       0
     );
 
-    const updatedOrder = await prisma.order.update({
-      where: { id },
-      data: {
-        storeId: targetStore.id,
-        customerName: trimmedName,
-        customerPhone: trimmedPhone || existingOrder.customerPhone,
-        customerAddress: trimmedAddress,
-        latitude: parsedLat,
-        longitude: parsedLng,
-        totalAmount: computedTotal,
-        items: {
-          deleteMany: {},
-          create: normalizedItems,
+    const updatedOrder = await prisma.$transaction(async (tx) => {
+      // Restore old items back to the original depot, then deduct new items from the target depot
+      await restoreDepotStock(tx, existingOrder.storeId, existingOrder.items);
+      await deductDepotStock(tx, targetStore.id, targetStore.name, normalizedItems);
+
+      return tx.order.update({
+        where: { id },
+        data: {
+          storeId: targetStore.id,
+          customerName: trimmedName,
+          customerPhone: trimmedPhone || existingOrder.customerPhone,
+          customerAddress: trimmedAddress,
+          latitude: parsedLat,
+          longitude: parsedLng,
+          totalAmount: computedTotal,
+          items: {
+            deleteMany: {},
+            create: normalizedItems,
+          },
         },
-      },
-      include: {
-        items: true,
-        store: true,
-        trip: {
-          include: { driver: { select: { id: true, name: true, email: true, role: true } } },
-        },
-      },
+        include: ORDER_WITH_RELATIONS_INCLUDE,
+      });
     });
 
     res.json({
@@ -432,6 +448,13 @@ export const updateOrder = async (req: Request, res: Response) => {
       data: updatedOrder,
     });
   } catch (error: any) {
+    if (error instanceof InsufficientStockError) {
+      return res.status(error.statusCode).json({
+        success: false,
+        message: error.message,
+        details: error.details,
+      });
+    }
     res.status(500).json({ success: false, message: error.message });
   }
 };
@@ -526,16 +549,43 @@ export const completeDelivery = async (req: Request, res: Response) => {
 
 export const failDelivery = async (req: Request, res: Response) => {
   try {
-    const { id } = req.params;
-    const updatedOrder = await prisma.order.update({
-      where: { id: Number(id) },
-      data: { status: OrderStatus.FAILED },
-      include: { items: true, store: true, trip: true },
+    const orderId = Number(req.params.id);
+    if (!Number.isInteger(orderId) || orderId <= 0) {
+      return res.status(400).json({ success: false, message: 'ID đơn hàng không hợp lệ.' });
+    }
+
+    const updatedOrder = await prisma.$transaction(async (tx) => {
+      const existing = await tx.order.findUnique({
+        where: { id: orderId },
+        include: { items: true },
+      });
+      if (!existing) {
+        return null;
+      }
+
+      if (existing.status !== OrderStatus.FAILED) {
+        await restoreDepotStock(tx, existing.storeId, existing.items);
+      }
+
+      const order = await tx.order.update({
+        where: { id: orderId },
+        data: { status: OrderStatus.FAILED },
+        include: { items: true, store: true, trip: true },
+      });
+
+      await checkAndCompleteTrip(order.tripId, tx);
+      return order;
     });
 
-    await checkAndCompleteTrip(updatedOrder.tripId);
+    if (!updatedOrder) {
+      return res.status(404).json({ success: false, message: 'Không tìm thấy đơn hàng.' });
+    }
 
-    res.json({ success: true, message: 'Đã ghi nhận giao hàng thất bại!', data: updatedOrder });
+    res.json({
+      success: true,
+      message: 'Đã ghi nhận giao hàng thất bại và hoàn tồn kho về depot!',
+      data: updatedOrder,
+    });
   } catch (error: any) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -701,6 +751,15 @@ export const assignDriverToOrder = async (req: Request, res: Response) => {
     const isRetry = existingOrder.status === OrderStatus.FAILED;
 
     const updatedOrder = await prisma.$transaction(async (tx) => {
+      if (isRetry) {
+        await deductDepotStock(
+          tx,
+          existingOrder.storeId,
+          existingOrder.store.name,
+          existingOrder.items
+        );
+      }
+
       let targetTrip = await tx.trip.findFirst({
         where: {
           driverId: targetDriver.id,
@@ -778,6 +837,13 @@ export const assignDriverToOrder = async (req: Request, res: Response) => {
       data: updatedOrder,
     });
   } catch (error: any) {
+    if (error instanceof InsufficientStockError) {
+      return res.status(error.statusCode).json({
+        success: false,
+        message: error.message,
+        details: error.details,
+      });
+    }
     res.status(500).json({ success: false, message: error.message });
   }
 };
@@ -1017,6 +1083,11 @@ export const bulkOrderAction = async (req: Request, res: Response) => {
       } else if (action === 'COMPLETE_DELIVERY' || action === 'FAIL_DELIVERY') {
         const nextStatus =
           action === 'COMPLETE_DELIVERY' ? OrderStatus.COMPLETED : OrderStatus.FAILED;
+        if (action === 'FAIL_DELIVERY') {
+          for (const order of eligibleOrders) {
+            await restoreDepotStock(tx, order.storeId, order.items);
+          }
+        }
         await tx.order.updateMany({
           where: { id: { in: eligibleIds } },
           data: { status: nextStatus },
@@ -1094,6 +1165,9 @@ export const bulkOrderAction = async (req: Request, res: Response) => {
         const oldTripIdsToCleanup = new Set<number>();
 
         for (const order of eligibleOrders) {
+          if (order.status === OrderStatus.FAILED) {
+            await deductDepotStock(tx, order.storeId, order.store.name, order.items);
+          }
           const isRetrySameTrip =
             order.status === OrderStatus.FAILED &&
             order.tripId === resolvedTripId;
@@ -1161,6 +1235,13 @@ export const bulkOrderAction = async (req: Request, res: Response) => {
       },
     });
   } catch (error: any) {
+    if (error instanceof InsufficientStockError) {
+      return res.status(error.statusCode).json({
+        success: false,
+        message: error.message,
+        details: error.details,
+      });
+    }
     res.status(500).json({ success: false, message: error.message });
   }
 };

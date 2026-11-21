@@ -109,13 +109,42 @@ const SAMPLE_PRODUCTS = [
 ];
 
 export async function seedProducts(prisma: PrismaClient) {
+  const stores = await prisma.store.findMany({
+    orderBy: [{ isDefault: 'desc' }, { id: 'asc' }],
+  });
+
   const products = [];
   for (const prod of SAMPLE_PRODUCTS) {
+    const { stock, ...productData } = prod;
     const item = await prisma.product.upsert({
-      where: { sku: prod.sku },
+      where: { sku: productData.sku },
       update: {},
-      create: prod,
+      create: productData,
     });
+
+    for (let idx = 0; idx < stores.length; idx++) {
+      const store = stores[idx];
+      const depotQuantity =
+        store.isDefault || idx === 0
+          ? stock
+          : Math.max(0, Math.round(stock * 0.6));
+
+      await prisma.depotStock.upsert({
+        where: {
+          storeId_productId: {
+            storeId: store.id,
+            productId: item.id,
+          },
+        },
+        update: {},
+        create: {
+          storeId: store.id,
+          productId: item.id,
+          quantity: depotQuantity,
+        },
+      });
+    }
+
     products.push(item);
   }
   return products;
@@ -128,25 +157,25 @@ export async function runSeed(prisma: PrismaClient, resetOrders = true) {
     where: { id: 1 },
     update: {
       code: 'DEP-001',
-      name: 'Lotte Mart Quận 7 (Depot)',
-      address: '469 Nguyễn Hữu Thọ, Tân Hưng, Quận 7, TP.HCM',
-      latitude: 10.7423,
-      longitude: 106.7024,
-      phone: '02837753232',
+      name: 'Bến Thành',
+      address: '156 Lê Thánh Tôn',
+      latitude: 10.769568,
+      longitude: 106.696129,
+      phone: '02871744091',
       isActive: true,
       ...(existingDefault && existingDefault.id !== 1 ? {} : { isDefault: true }),
     },
     create: {
       id: 1,
       code: 'DEP-001',
-      name: 'Lotte Mart Quận 7 (Depot)',
-      address: '469 Nguyễn Hữu Thọ, Tân Hưng, Quận 7, TP.HCM',
-      latitude: 10.7423,
-      longitude: 106.7024,
-      phone: '02837753232',
+      name: 'Bến Thành',
+      address: '156 Lê Thánh Tôn',
+      latitude: 10.769568,
+      longitude: 106.696129,
+      phone: '02871744091',
       isDefault: !existingDefault,
       isActive: true,
-      notes: 'Kho trung tâm khu vực Quận 7 & Nam Sài Gòn',
+      notes: 'Kho trung tâm khu vực Quận 1',
     },
   });
 
@@ -311,6 +340,11 @@ export async function runSeed(prisma: PrismaClient, resetOrders = true) {
     },
   ];
 
+  const seededProducts = await seedProducts(prisma);
+  const productByName = new Map(
+    seededProducts.map((p) => [p.name.toLowerCase(), p])
+  );
+
   const createdOrders = [];
   for (const ord of sampleOrders) {
     const order = await prisma.order.upsert({
@@ -331,7 +365,16 @@ export async function runSeed(prisma: PrismaClient, resetOrders = true) {
         totalAmount: ord.amount,
         status: OrderStatus.NEW,
         items: {
-          create: ord.items,
+          create: ord.items.map((item) => {
+            const matched = productByName.get(item.productName.toLowerCase());
+            return {
+              productId: matched?.id ?? null,
+              sku: matched?.sku ?? null,
+              productName: item.productName,
+              quantity: item.quantity,
+              price: item.price,
+            };
+          }),
         },
       },
       include: { items: true },
@@ -339,7 +382,6 @@ export async function runSeed(prisma: PrismaClient, resetOrders = true) {
     createdOrders.push(order);
   }
 
-  const seededProducts = await seedProducts(prisma);
   const seededDrivers = await seedDrivers(prisma);
 
   return {

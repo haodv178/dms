@@ -54,20 +54,21 @@ model DriverProfile {
 }
 
 model Store {
-  id        Int      @id @default(autoincrement())
-  code      String?  @unique
-  name      String
-  address   String
-  latitude  Float    // Điểm xuất phát (Depot) cho thuật toán VRP
-  longitude Float
-  phone     String   @default("")
-  isDefault Boolean  @default(false)
-  isActive  Boolean  @default(true)
-  notes     String?
-  orders    Order[]
-  trips     Trip[]
-  createdAt DateTime @default(now())
-  updatedAt DateTime @default(now()) @updatedAt
+  id          Int          @id @default(autoincrement())
+  code        String?      @unique
+  name        String
+  address     String
+  latitude    Float        // Điểm xuất phát (Depot) cho thuật toán VRP
+  longitude   Float
+  phone       String       @default("")
+  isDefault   Boolean      @default(false)
+  isActive    Boolean      @default(true)
+  notes       String?
+  orders      Order[]
+  trips       Trip[]
+  depotStocks DepotStock[]
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @default(now()) @updatedAt
 }
 
 model Order {
@@ -115,14 +116,28 @@ model Trip {
 }
 
 model Product {
+  id          Int          @id @default(autoincrement())
+  sku         String       @unique
+  name        String
+  category    String       @default("Thực phẩm")
+  unit        String       @default("Cái")
+  price       Decimal      @db.Decimal(10, 2)
+  isActive    Boolean      @default(true)
+  depotStocks DepotStock[]
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+}
+
+model DepotStock {
   id        Int      @id @default(autoincrement())
-  sku       String   @unique
-  name      String
-  category  String   @default("Thực phẩm")
-  unit      String   @default("Cái")
-  price     Decimal  @db.Decimal(10, 2)
-  stock     Int      @default(0)
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
+  storeId   Int
+  store     Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  productId Int
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  quantity  Int      @default(0)
   updatedAt DateTime @updatedAt
+
+  @@unique([storeId, productId])
+  @@index([storeId])
+  @@index([productId])
 }
