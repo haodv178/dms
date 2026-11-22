@@ -87,7 +87,7 @@ export function ActiveTripPanel({
               </Text>
               , tick chọn và bấm nút{' '}
               <Text type="label" size="xsm" color="accent">
-                &quot;Tối ưu hóa lộ trình với Google OR-Tools&quot;
+                &quot;Tối ưu hóa lộ trình&quot;
               </Text>
               .
             </Text>

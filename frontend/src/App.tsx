@@ -1524,11 +1524,8 @@ function DmsDashboard({
             bulkLoading={bulkActionLoading}
             onBatchPreparePacked={handleBatchPreparePacked}
             onBulkAction={handleBulkOrderAction}
-            onOpenBulkAssignDriver={handleOpenBulkAssignDriver}
-            onOpenBulkCreateTrip={handleOpenBulkCreateTrip}
             onEditOrder={handleOpenEditOrder}
             onUpdatePaymentStatus={handleUpdateOrderPaymentStatus}
-            onOpenAssignDriver={handleOpenAssignDriver}
             onStartPicking={handleStartPicking}
             onCompletePacking={handleCompletePacking}
             onCompleteDelivery={handleCompleteDelivery}

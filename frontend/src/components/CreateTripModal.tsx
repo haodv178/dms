@@ -298,13 +298,35 @@ export function CreateTripModal({
     [selectedOrderIds, orderDistanceMap]
   );
 
+  const assignableCountByStoreId = useMemo(() => {
+    const storeById = new Map(activeStores.map((s) => [s.id, s]));
+    const counts = new Map<number, number>();
+    for (const o of packedOrders) {
+      const store = storeById.get(o.storeId);
+      if (!store) continue;
+      const distKm = haversineDistanceKm(
+        store.latitude,
+        store.longitude,
+        o.latitude,
+        o.longitude
+      );
+      if (distKm <= MAX_DELIVERY_DISTANCE_KM) {
+        counts.set(store.id, (counts.get(store.id) ?? 0) + 1);
+      }
+    }
+    return counts;
+  }, [activeStores, packedOrders]);
+
   const storeOptions = useMemo(
     () =>
-      activeStores.map((s) => ({
-        value: String(s.id),
-        label: `${s.name}${s.isDefault ? ' (Mặc định)' : ''}`,
-      })),
-    [activeStores]
+      activeStores.map((s) => {
+        const count = assignableCountByStoreId.get(s.id) ?? 0;
+        return {
+          value: String(s.id),
+          label: `${s.name}${s.isDefault ? ' (Mặc định)' : ''} (${count})`,
+        };
+      }),
+    [activeStores, assignableCountByStoreId]
   );
 
   const driverOptions = [
@@ -353,7 +375,7 @@ export function CreateTripModal({
       <Layout
         header={
           <DialogHeader
-            title="Tạo Chuyến Xe Mới (Google OR-Tools VRP)"
+            title="Tạo Chuyến Xe Mới"
             subtitle={`Chọn điểm xuất phát, tài xế và các đơn PACKED trong bán kính ${MAX_DELIVERY_DISTANCE_KM} km`}
             onOpenChange={onOpenChange}
           />

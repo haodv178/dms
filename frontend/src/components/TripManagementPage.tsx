@@ -629,7 +629,7 @@ export function TripManagementPage({
 
                       {canManage && deliveringStopsCount > 0 && (
                         <Button
-                          label="Tối ưu lại (OR-Tools)"
+                          label="Tối ưu lại lộ trình"
                           variant="secondary"
                           size="sm"
                           icon={<Sparkles className="w-3.5 h-3.5" />}

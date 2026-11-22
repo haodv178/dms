@@ -66,7 +66,6 @@ export function Header({
               <Heading level={3} accessibilityLevel={1}>
                 DMS Dashboard
               </Heading>
-              <Badge label="Google OR-Tools VRP" variant="purple" />
             </div>
             <Text type="supporting" size="xsm">
               Hệ thống Quản lý Đơn hàng Kho &amp; Điều phối Giao hàng

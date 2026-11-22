@@ -13,9 +13,7 @@ import {
   RotateCcw,
   Search,
   ShoppingBag,
-  Sparkles,
   UserMinus,
-  UserPlus,
   X,
   XCircle,
 } from 'lucide-react';
@@ -52,7 +50,6 @@ import {
   STATUS_CONFIG,
   STATUS_TABS,
   canRoleAssignDriver,
-  canRoleCreateTrips,
   canRoleEditOrders,
   canRolePickAndPack,
   canRoleUpdateStopDelivery,
@@ -62,7 +59,6 @@ import {
   formatVND,
   getOrderNetAmount,
   getOrderRejectedAmount,
-  isOrderAssignable,
   isOrderEditable,
   isOrderRefundPending,
   isOrderRejectedStatus,
@@ -163,15 +159,12 @@ interface OrderTableProps {
     action: BulkOrderActionType,
     orderIds: number[]
   ) => Promise<void>;
-  onOpenBulkAssignDriver: (eligibleOrders: Order[], skippedCount: number) => void;
-  onOpenBulkCreateTrip: (packedOrderIds: number[]) => void;
   onEditOrder: (order: Order) => void;
   onUpdatePaymentStatus: (
     orderId: number,
     paymentStatus: PaymentStatus,
     paymentReference?: string | null
   ) => Promise<void>;
-  onOpenAssignDriver: (order: Order) => void;
   onStartPicking: (id: number) => void;
   onCompletePacking: (id: number) => void;
   onCompleteDelivery: (id: number) => void;
@@ -207,11 +200,8 @@ export function OrderTable({
   bulkLoading,
   onBatchPreparePacked,
   onBulkAction,
-  onOpenBulkAssignDriver,
-  onOpenBulkCreateTrip,
   onEditOrder,
   onUpdatePaymentStatus,
-  onOpenAssignDriver,
   onStartPicking,
   onCompletePacking,
   onCompleteDelivery,
@@ -319,21 +309,17 @@ export function OrderTable({
   const eligibleGroups = useMemo(() => {
     const pickable = selectedVisibleOrders.filter((o) => o.status === 'NEW');
     const packable = selectedVisibleOrders.filter((o) => o.status === 'PICKING');
-    const packed = selectedVisibleOrders.filter((o) => o.status === 'PACKED');
-    const assignable = selectedVisibleOrders.filter((o) => isOrderAssignable(o.status));
     const delivering = selectedVisibleOrders.filter((o) => o.status === 'DELIVERING');
-    return { pickable, packable, packed, assignable, delivering };
+    return { pickable, packable, delivering };
   }, [selectedVisibleOrders]);
 
   const canPickPack = canRolePickAndPack(role);
   const canAssign = canRoleAssignDriver(role);
-  const canCreateTrip = canRoleCreateTrips(role);
   const canUpdateDelivery = canRoleUpdateStopDelivery(role);
 
   const hasAnyAvailableBulkAction =
     (canPickPack && (eligibleGroups.pickable.length > 0 || eligibleGroups.packable.length > 0)) ||
-    (canAssign && (eligibleGroups.assignable.length > 0 || eligibleGroups.delivering.length > 0)) ||
-    (canCreateTrip && eligibleGroups.packed.length > 0) ||
+    (canAssign && eligibleGroups.delivering.length > 0) ||
     (canUpdateDelivery && eligibleGroups.delivering.length > 0);
 
   const openConfirmDialog = (
@@ -659,35 +645,6 @@ export function OrderTable({
                   />
                 )}
 
-                {canAssign && eligibleGroups.assignable.length > 0 && (
-                  <Button
-                    label={`Gán tài xế (${eligibleGroups.assignable.length})`}
-                    variant="primary"
-                    size="sm"
-                    icon={<UserPlus className="w-3.5 h-3.5" />}
-                    isDisabled={bulkLoading}
-                    onClick={() =>
-                      onOpenBulkAssignDriver(
-                        eligibleGroups.assignable,
-                        selectedVisibleOrders.length - eligibleGroups.assignable.length
-                      )
-                    }
-                  />
-                )}
-
-                {canCreateTrip && eligibleGroups.packed.length > 0 && (
-                  <Button
-                    label={`Tạo chuyến tối ưu (${eligibleGroups.packed.length})`}
-                    variant="secondary"
-                    size="sm"
-                    icon={<Sparkles className="w-3.5 h-3.5" />}
-                    isDisabled={bulkLoading}
-                    onClick={() =>
-                      onOpenBulkCreateTrip(eligibleGroups.packed.map((o) => o.id))
-                    }
-                  />
-                )}
-
                 {canAssign && eligibleGroups.delivering.length > 0 && (
                   <Button
                     label={`Bỏ gán tài xế (${eligibleGroups.delivering.length})`}
@@ -846,14 +803,6 @@ export function OrderTable({
                     const paymentStatusMeta =
                       PAYMENT_STATUS_CONFIG[order.paymentStatus ?? 'UNPAID'];
                     const assignedDriver = order.trip?.driver ?? null;
-                    const canAssignRow =
-                      canRoleAssignDriver(role) && isOrderAssignable(order.status);
-                    const assignLabel =
-                      order.status === 'FAILED'
-                        ? 'Giao lại'
-                        : assignedDriver
-                          ? 'Đổi tài xế'
-                          : 'Gán tài xế';
                     const isSelected = selectedIdSet.has(order.id);
                     const itemsList = order.items ?? [];
                     const fullItemsSummary = itemsList
@@ -1099,16 +1048,6 @@ export function OrderTable({
                                 <Text type="supporting" size="sm">
                                   Chưa gán
                                 </Text>
-                              )}
-
-                              {canAssignRow && (
-                                <Button
-                                  label={assignLabel}
-                                  variant={assignedDriver ? 'secondary' : 'primary'}
-                                  size="sm"
-                                  icon={<UserPlus className="w-3.5 h-3.5" />}
-                                  onClick={() => onOpenAssignDriver(order)}
-                                />
                               )}
                             </Stack>
                           </TableCell>

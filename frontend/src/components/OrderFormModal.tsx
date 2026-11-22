@@ -173,6 +173,8 @@ export function OrderFormModal({
   );
 
   const [catalogSearch, setCatalogSearch] = useState('');
+  const [submittedCatalogSearch, setSubmittedCatalogSearch] = useState('');
+  const [catalogSearchTick, setCatalogSearchTick] = useState(0);
   const [catalogResults, setCatalogResults] = useState<Product[]>([]);
   const [searchingCatalog, setSearchingCatalog] = useState(false);
   const [depotStockMap, setDepotStockMap] = useState<Record<number, number>>({});
@@ -181,7 +183,9 @@ export function OrderFormModal({
   useEffect(() => {
     if (!isOpen) {
       setCatalogSearch('');
+      setSubmittedCatalogSearch('');
       setCatalogResults([]);
+      setSearchingCatalog(false);
       setDepotStockMap({});
       return;
     }
@@ -196,23 +200,28 @@ export function OrderFormModal({
     setDepotStockMap(seeded);
   }, [isOpen, selectedStore.id, products]);
 
-  // Always fetch catalog results scoped to the currently selected depot
+  // Fetch catalog results only after admin explicitly searches with a non-empty keyword
   useEffect(() => {
     if (!isOpen) return;
 
-    let cancelled = false;
-    const trimmed = catalogSearch.trim();
-    const delay = trimmed ? 200 : 0;
+    const trimmed = submittedCatalogSearch.trim();
+    if (!trimmed) {
+      setCatalogResults([]);
+      setSearchingCatalog(false);
+      return;
+    }
 
-    const timer = window.setTimeout(async () => {
-      setSearchingCatalog(true);
+    let cancelled = false;
+    setSearchingCatalog(true);
+
+    (async () => {
       try {
         const res = await fetchProducts({
           activeOnly: true,
           storeId: selectedStore.id,
-          ...(trimmed ? { search: trimmed } : {}),
+          search: trimmed,
           page: 1,
-          limit: trimmed ? 15 : 20,
+          limit: 15,
         });
         if (!cancelled) {
           setCatalogResults(res.items);
@@ -233,13 +242,31 @@ export function OrderFormModal({
           setSearchingCatalog(false);
         }
       }
-    }, delay);
+    })();
 
     return () => {
       cancelled = true;
-      window.clearTimeout(timer);
     };
-  }, [isOpen, catalogSearch, selectedStore.id]);
+  }, [isOpen, submittedCatalogSearch, catalogSearchTick, selectedStore.id]);
+
+  const handleCatalogSearchInputChange = (value: string) => {
+    setCatalogSearch(value);
+    if (!value.trim()) {
+      setSubmittedCatalogSearch('');
+      setCatalogResults([]);
+    }
+  };
+
+  const handleCatalogSearch = () => {
+    const trimmed = catalogSearch.trim();
+    if (!trimmed) {
+      setSubmittedCatalogSearch('');
+      setCatalogResults([]);
+      return;
+    }
+    setSubmittedCatalogSearch(trimmed);
+    setCatalogSearchTick((prev) => prev + 1);
+  };
 
   // Ensure any already-selected items in form.items have their stock loaded for selectedStore.id
   useEffect(() => {
@@ -783,83 +810,112 @@ export function OrderFormModal({
                   </Text>
                 </div>
 
-                <TextInput
-                  label="Tìm sản phẩm trong danh mục"
-                  isLabelHidden
-                  type="search"
-                  size="sm"
-                  width="100%"
-                  startIcon={<Search className="w-3.5 h-3.5" />}
-                  placeholder="Tìm kiếm sản phẩm theo tên hoặc mã SKU..."
-                  value={catalogSearch}
-                  onChange={setCatalogSearch}
-                />
-
-                <div className="max-h-[170px] overflow-y-auto rounded-lg border border-border divide-y divide-border bg-secondary/15">
-                  {searchingCatalog ? (
-                    <div className="py-4 text-center">
-                      <Text type="supporting" size="xsm">
-                        Đang tìm sản phẩm...
-                      </Text>
-                    </div>
-                  ) : catalogResults.length === 0 ? (
-                    <div className="py-4 text-center">
-                      <Text type="supporting" size="xsm">
-                        Không tìm thấy sản phẩm đang kinh doanh phù hợp.
-                      </Text>
-                    </div>
-                  ) : (
-                    catalogResults.map((product) => {
-                      const effectiveStock = getEffectiveAvailable(product.id, product.stock) ?? product.stock;
-                      const alreadyInOrder = requestedByProductId.get(product.id) ?? 0;
-                      const isOutOfStock = effectiveStock <= 0;
-                      const isMaxReached = !isOutOfStock && alreadyInOrder >= effectiveStock;
-
-                      return (
-                        <div
-                          key={product.id}
-                          className={`px-3 py-2 flex items-center justify-between gap-3 transition-colors ${
-                            isOutOfStock ? 'opacity-65 bg-secondary/20' : 'hover:bg-secondary/40'
-                          }`}
-                        >
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <Text type="label" size="xsm" maxLines={1}>
-                                {product.name}
-                              </Text>
-                              <Text type="code" size="2xs">
-                                {product.sku}
-                              </Text>
-                              {isOutOfStock && (
-                                <Badge label="Hết hàng" variant="error" />
-                              )}
-                            </div>
-                            <Text type="supporting" size="2xs" hasTabularNumbers>
-                              {formatVND(product.price)} / {product.unit} • Tồn tại depot:{' '}
-                              {effectiveStock}
-                              {alreadyInOrder > 0 ? ` (đã chọn ${alreadyInOrder})` : ''}
-                            </Text>
-                          </div>
-                          <Button
-                            label={
-                              isOutOfStock
-                                ? 'Hết hàng'
-                                : isMaxReached
-                                  ? 'Đã tối đa'
-                                  : 'Thêm'
-                            }
-                            type="button"
-                            variant="secondary"
-                            size="sm"
-                            icon={!isOutOfStock && !isMaxReached ? <Plus className="w-3.5 h-3.5" /> : undefined}
-                            isDisabled={isOutOfStock || isMaxReached}
-                            onClick={() => handleSelectProduct(product)}
-                          />
-                        </div>
-                      );
-                    })
-                  )}
+                <div className="flex items-center gap-2">
+                  <div className="flex-1 min-w-0">
+                    <TextInput
+                      label="Tìm sản phẩm trong danh mục"
+                      isLabelHidden
+                      type="search"
+                      enterKeyHint="search"
+                      size="sm"
+                      width="100%"
+                      hasClear
+                      startIcon={<Search className="w-3.5 h-3.5" />}
+                      placeholder="Tìm kiếm sản phẩm theo tên hoặc mã SKU..."
+                      value={catalogSearch}
+                      onChange={handleCatalogSearchInputChange}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleCatalogSearch();
+                        }
+                      }}
+                    />
+                  </div>
+                  <Button
+                    label="Tìm kiếm"
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    icon={<Search className="w-3.5 h-3.5" />}
+                    isLoading={searchingCatalog}
+                    isDisabled={!catalogSearch.trim()}
+                    onClick={handleCatalogSearch}
+                  />
                 </div>
+
+                {submittedCatalogSearch !== '' && (
+                  <div className="max-h-[170px] overflow-y-auto rounded-lg border border-border divide-y divide-border bg-secondary/15">
+                    {searchingCatalog ? (
+                      <div className="py-4 text-center">
+                        <Text type="supporting" size="xsm">
+                          Đang tìm sản phẩm...
+                        </Text>
+                      </div>
+                    ) : catalogResults.length === 0 ? (
+                      <div className="py-4 text-center">
+                        <Text type="supporting" size="xsm">
+                          Không tìm thấy sản phẩm đang kinh doanh phù hợp.
+                        </Text>
+                      </div>
+                    ) : (
+                      catalogResults.map((product) => {
+                        const effectiveStock =
+                          getEffectiveAvailable(product.id, product.stock) ?? product.stock;
+                        const alreadyInOrder = requestedByProductId.get(product.id) ?? 0;
+                        const isOutOfStock = effectiveStock <= 0;
+                        const isMaxReached = !isOutOfStock && alreadyInOrder >= effectiveStock;
+
+                        return (
+                          <div
+                            key={product.id}
+                            className={`px-3 py-2 flex items-center justify-between gap-3 transition-colors ${
+                              isOutOfStock ? 'opacity-65 bg-secondary/20' : 'hover:bg-secondary/40'
+                            }`}
+                          >
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <Text type="label" size="xsm" maxLines={1}>
+                                  {product.name}
+                                </Text>
+                                <Text type="code" size="2xs">
+                                  {product.sku}
+                                </Text>
+                                {isOutOfStock && (
+                                  <Badge label="Hết hàng" variant="error" />
+                                )}
+                              </div>
+                              <Text type="supporting" size="2xs" hasTabularNumbers>
+                                {formatVND(product.price)} / {product.unit} • Tồn tại depot:{' '}
+                                {effectiveStock}
+                                {alreadyInOrder > 0 ? ` (đã chọn ${alreadyInOrder})` : ''}
+                              </Text>
+                            </div>
+                            <Button
+                              label={
+                                isOutOfStock
+                                  ? 'Hết hàng'
+                                  : isMaxReached
+                                    ? 'Đã tối đa'
+                                    : 'Thêm'
+                              }
+                              type="button"
+                              variant="secondary"
+                              size="sm"
+                              icon={
+                                !isOutOfStock && !isMaxReached ? (
+                                  <Plus className="w-3.5 h-3.5" />
+                                ) : undefined
+                              }
+                              isDisabled={isOutOfStock || isMaxReached}
+                              onClick={() => handleSelectProduct(product)}
+                            />
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Order Items Table: 4 Columns (Tên sản phẩm, SKU, Giá [read-only], Qty [editable]) */}
