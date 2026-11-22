@@ -77,6 +77,7 @@ import {
   getDefaultDeliveryDate,
   haversineDistanceKm,
   isDeliveryDateBeforeToday,
+  isOrderItemsEditable,
   orderToFormState,
   productToFormState,
   storeToFormState,
@@ -92,6 +93,7 @@ import {
   type ManagedUser,
   type Order,
   type OrderFormState,
+  type OrderStatus,
   type PaymentStatus,
   type Product,
   type ProductFormState,
@@ -233,7 +235,7 @@ function DmsDashboard({
   const [editingStore, setEditingStore] = useState<Store | null>(null);
   const [storeForm, setStoreForm] = useState<StoreFormState>(INITIAL_STORE_FORM);
   const [trips, setTrips] = useState<Trip[]>([]);
-  const [statusFilter, setStatusFilter] = useState<string>('ALL');
+  const [statusFilters, setStatusFilters] = useState<OrderStatus[]>([]);
   const [paymentMethodFilter, setPaymentMethodFilter] = useState<string>('ALL');
   const [paymentStatusFilter, setPaymentStatusFilter] = useState<string>('ALL');
   const [deliveryDateFilter, setDeliveryDateFilter] = useState<string>('');
@@ -713,8 +715,8 @@ function DmsDashboard({
     });
   }, [orders]);
 
-  const handleStatusFilterChange = (nextStatus: string) => {
-    setStatusFilter(nextStatus);
+  const handleStatusFiltersChange = (nextStatuses: OrderStatus[]) => {
+    setStatusFilters(nextStatuses);
     setSelectedOrderIds([]);
   };
 
@@ -918,33 +920,40 @@ function DmsDashboard({
       return;
     }
 
-    if (orderForm.items.length === 0) {
-      notify('Đơn hàng phải có ít nhất 1 sản phẩm.', 'error');
-      return;
-    }
+    const canEditItems =
+      orderModalMode === 'create' ||
+      !editingOrder ||
+      isOrderItemsEditable(editingOrder.status);
 
-    for (let i = 0; i < orderForm.items.length; i++) {
-      const item = orderForm.items[i];
-      const qty = Number(item.quantity);
-      const price = Number(item.price);
-      if (!item.productName.trim()) {
-        notify(`Sản phẩm #${i + 1}: Vui lòng nhập tên sản phẩm.`, 'error');
+    if (canEditItems) {
+      if (orderForm.items.length === 0) {
+        notify('Đơn hàng phải có ít nhất 1 sản phẩm.', 'error');
         return;
       }
-      if (!Number.isInteger(qty) || qty < 1) {
-        notify(`Sản phẩm "${item.productName}": Số lượng phải là số nguyên >= 1.`, 'error');
-        return;
-      }
-      if (!Number.isFinite(price) || price < 0) {
-        notify(`Sản phẩm "${item.productName}": Đơn giá phải là số hợp lệ >= 0.`, 'error');
-        return;
+
+      for (let i = 0; i < orderForm.items.length; i++) {
+        const item = orderForm.items[i];
+        const qty = Number(item.quantity);
+        const price = Number(item.price);
+        if (!item.productName.trim()) {
+          notify(`Sản phẩm #${i + 1}: Vui lòng nhập tên sản phẩm.`, 'error');
+          return;
+        }
+        if (!Number.isInteger(qty) || qty < 1) {
+          notify(`Sản phẩm "${item.productName}": Số lượng phải là số nguyên >= 1.`, 'error');
+          return;
+        }
+        if (!Number.isFinite(price) || price < 0) {
+          notify(`Sản phẩm "${item.productName}": Đơn giá phải là số hợp lệ >= 0.`, 'error');
+          return;
+        }
       }
     }
 
     setSavingOrder(true);
     try {
       if (orderModalMode === 'edit' && editingOrder) {
-        await updateOrder(editingOrder.id, orderForm);
+        await updateOrder(editingOrder.id, orderForm, { includeItems: canEditItems });
         notify(`Đã cập nhật đơn hàng ${editingOrder.orderCode} thành công!`);
       } else {
         await createOrder(depot.id, orderForm);
@@ -996,7 +1005,7 @@ function DmsDashboard({
   const filteredOrders = useMemo(() => {
     const q = orderSearch.trim().toLowerCase();
     return sortedOrders.filter((o) => {
-      if (statusFilter !== 'ALL' && o.status !== statusFilter) return false;
+      if (statusFilters.length > 0 && !statusFilters.includes(o.status)) return false;
       if (paymentMethodFilter !== 'ALL' && (o.paymentMethod ?? 'COD') !== paymentMethodFilter) {
         return false;
       }
@@ -1024,7 +1033,7 @@ function DmsDashboard({
     });
   }, [
     sortedOrders,
-    statusFilter,
+    statusFilters,
     paymentMethodFilter,
     paymentStatusFilter,
     deliveryDateFilter,
@@ -1520,8 +1529,8 @@ function DmsDashboard({
             role={role}
             filteredOrders={filteredOrders}
             counts={counts}
-            statusFilter={statusFilter}
-            onStatusFilterChange={handleStatusFilterChange}
+            statusFilters={statusFilters}
+            onStatusFiltersChange={handleStatusFiltersChange}
             paymentMethodFilter={paymentMethodFilter}
             onPaymentMethodFilterChange={setPaymentMethodFilter}
             paymentStatusFilter={paymentStatusFilter}

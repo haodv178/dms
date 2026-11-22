@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Circle, MapContainer, Marker, TileLayer, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
-import { AlertTriangle, Clock, CreditCard, MapPin, Plus, Search, Trash2, Warehouse } from 'lucide-react';
+import { AlertTriangle, Clock, CreditCard, Lock, MapPin, Plus, Search, Trash2, Warehouse } from 'lucide-react';
 import { Badge } from '@astryxdesign/core/Badge';
 import { Button } from '@astryxdesign/core/Button';
 import { DateInput } from '@astryxdesign/core/DateInput';
@@ -36,6 +36,7 @@ import {
   getDefaultDeliveryDate,
   haversineDistanceKm,
   isDeliveryDateBeforeToday,
+  isOrderItemsEditable,
   toIsoDateString,
   type DeliveryHour,
   type Order,
@@ -142,6 +143,7 @@ export function OrderFormModal({
   onSubmit,
 }: OrderFormModalProps) {
   const isEdit = mode === 'edit';
+  const canEditItems = !isEdit || !editingOrder || isOrderItemsEditable(editingOrder.status);
   const pinIcon = useMemo(() => createPinIcon(), []);
   const depotIcon = useMemo(() => createDepotMiniIcon(), []);
 
@@ -342,6 +344,9 @@ export function OrderFormModal({
 
   const stockIssuesByIndex = useMemo(() => {
     const issues = new Map<number, { available: number; requested: number }>();
+    if (!canEditItems && editingOrder && selectedStore.id === editingOrder.storeId) {
+      return issues;
+    }
     form.items.forEach((item, idx) => {
       if (!item.productId) return;
       const available = getEffectiveAvailable(item.productId);
@@ -352,7 +357,15 @@ export function OrderFormModal({
       }
     });
     return issues;
-  }, [form.items, depotStockMap, originalReservedByProductId, requestedByProductId]);
+  }, [
+    canEditItems,
+    editingOrder,
+    selectedStore.id,
+    form.items,
+    depotStockMap,
+    originalReservedByProductId,
+    requestedByProductId,
+  ]);
 
   const hasStockConflict = stockIssuesByIndex.size > 0;
 
@@ -401,6 +414,7 @@ export function OrderFormModal({
   };
 
   const handleSelectProduct = (product: Product) => {
+    if (!canEditItems) return;
     const existingIndex = form.items.findIndex(
       (it) =>
         (it.productId && it.productId === product.id) ||
@@ -433,6 +447,7 @@ export function OrderFormModal({
   };
 
   const handleUpdateQty = (index: number, quantity: string) => {
+    if (!canEditItems) return;
     const nextItems = form.items.map((item, idx) =>
       idx === index ? { ...item, quantity } : item
     );
@@ -440,6 +455,7 @@ export function OrderFormModal({
   };
 
   const handleRemoveItem = (index: number) => {
+    if (!canEditItems) return;
     onFormChange({
       ...form,
       items: form.items.filter((_, idx) => idx !== index),
@@ -466,7 +482,9 @@ export function OrderFormModal({
             }
             subtitle={
               isEdit
-                ? 'Cập nhật thông tin khách hàng, vị trí giao hàng và số lượng sản phẩm'
+                ? canEditItems
+                  ? 'Cập nhật thông tin khách hàng, vị trí giao hàng và số lượng sản phẩm'
+                  : 'Cập nhật thông tin khách hàng, vị trí giao hàng và thanh toán (chỉ sửa sản phẩm khi đơn ở trạng thái NEW)'
                 : 'Nhập thông tin khách hàng, chọn sản phẩm từ danh mục và vị trí giao hàng'
             }
             onOpenChange={onOpenChange}
@@ -799,130 +817,147 @@ export function OrderFormModal({
                 </div>
               </div>
 
-              {/* Product Catalog Picker (Strict Catalog Selection Only) */}
-              <div className="space-y-2.5">
-                <div className="flex items-center justify-between gap-2 flex-wrap">
-                  <Text type="label" size="sm">
-                    Chọn sản phẩm từ danh mục
-                  </Text>
-                  <Text type="supporting" size="2xs">
-                    Hiển thị tồn kho thực tế tại {selectedStore.name}
-                  </Text>
-                </div>
+              {/* Product Catalog Picker (Strict Catalog Selection Only - NEW orders only) */}
+              {canEditItems ? (
+                <div className="space-y-2.5">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <Text type="label" size="sm">
+                      Chọn sản phẩm từ danh mục
+                    </Text>
+                    <Text type="supporting" size="2xs">
+                      Hiển thị tồn kho thực tế tại {selectedStore.name}
+                    </Text>
+                  </div>
 
-                <div className="flex items-center gap-2">
-                  <div className="flex-1 min-w-0">
-                    <TextInput
-                      label="Tìm sản phẩm trong danh mục"
-                      isLabelHidden
-                      type="search"
-                      enterKeyHint="search"
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 min-w-0">
+                      <TextInput
+                        label="Tìm sản phẩm trong danh mục"
+                        isLabelHidden
+                        type="search"
+                        enterKeyHint="search"
+                        size="sm"
+                        width="100%"
+                        hasClear
+                        startIcon={<Search className="w-3.5 h-3.5" />}
+                        placeholder="Tìm kiếm sản phẩm theo tên hoặc mã SKU..."
+                        value={catalogSearch}
+                        onChange={handleCatalogSearchInputChange}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleCatalogSearch();
+                          }
+                        }}
+                      />
+                    </div>
+                    <Button
+                      label="Tìm kiếm"
+                      type="button"
+                      variant="secondary"
                       size="sm"
-                      width="100%"
-                      hasClear
-                      startIcon={<Search className="w-3.5 h-3.5" />}
-                      placeholder="Tìm kiếm sản phẩm theo tên hoặc mã SKU..."
-                      value={catalogSearch}
-                      onChange={handleCatalogSearchInputChange}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          handleCatalogSearch();
-                        }
-                      }}
+                      icon={<Search className="w-3.5 h-3.5" />}
+                      isLoading={searchingCatalog}
+                      isDisabled={!catalogSearch.trim()}
+                      onClick={handleCatalogSearch}
                     />
                   </div>
-                  <Button
-                    label="Tìm kiếm"
-                    type="button"
-                    variant="secondary"
-                    size="sm"
-                    icon={<Search className="w-3.5 h-3.5" />}
-                    isLoading={searchingCatalog}
-                    isDisabled={!catalogSearch.trim()}
-                    onClick={handleCatalogSearch}
-                  />
-                </div>
 
-                {submittedCatalogSearch !== '' && (
-                  <div className="max-h-[170px] overflow-y-auto rounded-lg border border-border divide-y divide-border bg-secondary/15">
-                    {searchingCatalog ? (
-                      <div className="py-4 text-center">
-                        <Text type="supporting" size="xsm">
-                          Đang tìm sản phẩm...
-                        </Text>
-                      </div>
-                    ) : catalogResults.length === 0 ? (
-                      <div className="py-4 text-center">
-                        <Text type="supporting" size="xsm">
-                          Không tìm thấy sản phẩm đang kinh doanh phù hợp.
-                        </Text>
-                      </div>
-                    ) : (
-                      catalogResults.map((product) => {
-                        const effectiveStock =
-                          getEffectiveAvailable(product.id, product.stock) ?? product.stock;
-                        const alreadyInOrder = requestedByProductId.get(product.id) ?? 0;
-                        const isOutOfStock = effectiveStock <= 0;
-                        const isMaxReached = !isOutOfStock && alreadyInOrder >= effectiveStock;
+                  {submittedCatalogSearch !== '' && (
+                    <div className="max-h-[170px] overflow-y-auto rounded-lg border border-border divide-y divide-border bg-secondary/15">
+                      {searchingCatalog ? (
+                        <div className="py-4 text-center">
+                          <Text type="supporting" size="xsm">
+                            Đang tìm sản phẩm...
+                          </Text>
+                        </div>
+                      ) : catalogResults.length === 0 ? (
+                        <div className="py-4 text-center">
+                          <Text type="supporting" size="xsm">
+                            Không tìm thấy sản phẩm đang kinh doanh phù hợp.
+                          </Text>
+                        </div>
+                      ) : (
+                        catalogResults.map((product) => {
+                          const effectiveStock =
+                            getEffectiveAvailable(product.id, product.stock) ?? product.stock;
+                          const alreadyInOrder = requestedByProductId.get(product.id) ?? 0;
+                          const isOutOfStock = effectiveStock <= 0;
+                          const isMaxReached = !isOutOfStock && alreadyInOrder >= effectiveStock;
 
-                        return (
-                          <div
-                            key={product.id}
-                            className={`px-3 py-2 flex items-center justify-between gap-3 transition-colors ${
-                              isOutOfStock ? 'opacity-65 bg-secondary/20' : 'hover:bg-secondary/40'
-                            }`}
-                          >
-                            <div className="min-w-0 flex-1">
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <Text type="label" size="xsm" maxLines={1}>
-                                  {product.name}
+                          return (
+                            <div
+                              key={product.id}
+                              className={`px-3 py-2 flex items-center justify-between gap-3 transition-colors ${
+                                isOutOfStock ? 'opacity-65 bg-secondary/20' : 'hover:bg-secondary/40'
+                              }`}
+                            >
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <Text type="label" size="xsm" maxLines={1}>
+                                    {product.name}
+                                  </Text>
+                                  <Text type="code" size="2xs">
+                                    {product.sku}
+                                  </Text>
+                                  {isOutOfStock && (
+                                    <Badge label="Hết hàng" variant="error" />
+                                  )}
+                                </div>
+                                <Text type="supporting" size="2xs" hasTabularNumbers>
+                                  {formatVND(product.price)} / {product.unit} • Tồn tại depot:{' '}
+                                  {effectiveStock}
+                                  {alreadyInOrder > 0 ? ` (đã chọn ${alreadyInOrder})` : ''}
                                 </Text>
-                                <Text type="code" size="2xs">
-                                  {product.sku}
-                                </Text>
-                                {isOutOfStock && (
-                                  <Badge label="Hết hàng" variant="error" />
-                                )}
                               </div>
-                              <Text type="supporting" size="2xs" hasTabularNumbers>
-                                {formatVND(product.price)} / {product.unit} • Tồn tại depot:{' '}
-                                {effectiveStock}
-                                {alreadyInOrder > 0 ? ` (đã chọn ${alreadyInOrder})` : ''}
-                              </Text>
+                              <Button
+                                label={
+                                  isOutOfStock
+                                    ? 'Hết hàng'
+                                    : isMaxReached
+                                      ? 'Đã tối đa'
+                                      : 'Thêm'
+                                }
+                                type="button"
+                                variant="secondary"
+                                size="sm"
+                                icon={
+                                  !isOutOfStock && !isMaxReached ? (
+                                    <Plus className="w-3.5 h-3.5" />
+                                  ) : undefined
+                                }
+                                isDisabled={isOutOfStock || isMaxReached}
+                                onClick={() => handleSelectProduct(product)}
+                              />
                             </div>
-                            <Button
-                              label={
-                                isOutOfStock
-                                  ? 'Hết hàng'
-                                  : isMaxReached
-                                    ? 'Đã tối đa'
-                                    : 'Thêm'
-                              }
-                              type="button"
-                              variant="secondary"
-                              size="sm"
-                              icon={
-                                !isOutOfStock && !isMaxReached ? (
-                                  <Plus className="w-3.5 h-3.5" />
-                                ) : undefined
-                              }
-                              isDisabled={isOutOfStock || isMaxReached}
-                              onClick={() => handleSelectProduct(product)}
-                            />
-                          </div>
-                        );
-                      })
-                    )}
-                  </div>
-                )}
-              </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="flex items-start gap-2 p-3 rounded-xl border border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300">
+                  <Lock className="w-4 h-4 shrink-0 mt-0.5" />
+                  <Text type="supporting" size="xsm">
+                    Đơn hàng đang ở trạng thái{' '}
+                    <strong>{statusMeta?.label ?? editingOrder?.status}</strong>. Chỉ cho phép thêm,
+                    xóa hoặc sửa số lượng sản phẩm khi đơn hàng đang ở trạng thái{' '}
+                    <strong>Mới (NEW)</strong>.
+                  </Text>
+                </div>
+              )}
 
-              {/* Order Items Table: 4 Columns (Tên sản phẩm, SKU, Giá [read-only], Qty [editable]) */}
+              {/* Order Items Table: 4 Columns (Tên sản phẩm, SKU, Giá [read-only], Qty [editable when NEW]) */}
               <div className="space-y-2">
-                <Text type="label" size="sm">
-                  Danh sách sản phẩm trong đơn ({form.items.length})
-                </Text>
+                <div className="flex items-center justify-between gap-2">
+                  <Text type="label" size="sm">
+                    Danh sách sản phẩm trong đơn ({form.items.length})
+                  </Text>
+                  {!canEditItems && (
+                    <Badge label="Đã khóa chỉnh sửa" variant="warning" />
+                  )}
+                </div>
 
                 {form.items.length === 0 ? (
                   <div className="py-6 px-4 rounded-lg border border-dashed border-border text-center">
@@ -963,7 +998,7 @@ export function OrderFormModal({
                                         {stockIssue.available}, cần {stockIssue.requested})
                                       </span>
                                     </div>
-                                  ) : availableAtDepot !== undefined ? (
+                                  ) : canEditItems && availableAtDepot !== undefined ? (
                                     <Text type="supporting" size="2xs" hasTabularNumbers>
                                       Tồn tại depot: {availableAtDepot}
                                     </Text>
@@ -981,28 +1016,34 @@ export function OrderFormModal({
                                 </Text>
                               </TableCell>
                               <TableCell>
-                                <div className="flex items-center gap-2">
-                                  <div className="w-20">
-                                    <TextInput
-                                      label={`Số lượng cho ${item.productName}`}
-                                      isLabelHidden
-                                      isRequired
-                                      inputMode="numeric"
+                                {canEditItems ? (
+                                  <div className="flex items-center gap-2">
+                                    <div className="w-20">
+                                      <TextInput
+                                        label={`Số lượng cho ${item.productName}`}
+                                        isLabelHidden
+                                        isRequired
+                                        inputMode="numeric"
+                                        size="sm"
+                                        width="100%"
+                                        value={item.quantity}
+                                        onChange={(val) => handleUpdateQty(idx, val)}
+                                      />
+                                    </div>
+                                    <IconButton
+                                      label={`Xóa ${item.productName}`}
+                                      tooltip="Xóa sản phẩm khỏi đơn"
+                                      variant="destructive"
                                       size="sm"
-                                      width="100%"
-                                      value={item.quantity}
-                                      onChange={(val) => handleUpdateQty(idx, val)}
+                                      icon={<Trash2 className="w-3.5 h-3.5" />}
+                                      onClick={() => handleRemoveItem(idx)}
                                     />
                                   </div>
-                                  <IconButton
-                                    label={`Xóa ${item.productName}`}
-                                    tooltip="Xóa sản phẩm khỏi đơn"
-                                    variant="destructive"
-                                    size="sm"
-                                    icon={<Trash2 className="w-3.5 h-3.5" />}
-                                    onClick={() => handleRemoveItem(idx)}
-                                  />
-                                </div>
+                                ) : (
+                                  <Text type="label" size="sm" hasTabularNumbers>
+                                    {item.quantity}
+                                  </Text>
+                                )}
                               </TableCell>
                             </TableRow>
                           );

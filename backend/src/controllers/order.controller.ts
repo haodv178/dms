@@ -102,6 +102,74 @@ const EDITABLE_ORDER_STATUSES: OrderStatus[] = [
   OrderStatus.PACKED,
 ];
 
+class OrderItemsLockedError extends Error {
+  statusCode = 400;
+
+  constructor(status: OrderStatus, statusCode = 400) {
+    super(
+      `Không thể chỉnh sửa sản phẩm của đơn hàng ở trạng thái ${status}. Chỉ cho phép sửa sản phẩm khi đơn hàng đang ở trạng thái NEW.`
+    );
+    this.name = 'OrderItemsLockedError';
+    this.statusCode = statusCode;
+  }
+}
+
+function areOrderItemsUnchanged(
+  existingItems: Array<{
+    productId: number | null;
+    sku: string | null;
+    productName: string;
+    quantity: number;
+  }>,
+  incomingItems: unknown
+): boolean {
+  if (!Array.isArray(incomingItems) || incomingItems.length !== existingItems.length) {
+    return false;
+  }
+
+  const toKey = (item: {
+    productId: number | null;
+    sku: string | null;
+    productName: string;
+    quantity: number;
+  }) =>
+    JSON.stringify({
+      productId: item.productId ?? null,
+      sku: (item.sku ?? '').trim().toUpperCase(),
+      productName: item.productName.trim().toLowerCase(),
+      quantity: item.quantity,
+    });
+
+  const existingCounts = new Map<string, number>();
+  for (const item of existingItems) {
+    const key = toKey(item);
+    existingCounts.set(key, (existingCounts.get(key) ?? 0) + 1);
+  }
+
+  for (const raw of incomingItems) {
+    if (!raw || typeof raw !== 'object') return false;
+    const obj = raw as Record<string, unknown>;
+    const qty = Number(obj.quantity);
+    if (!Number.isInteger(qty) || qty < 1) return false;
+    const rawProductId =
+      obj.productId !== undefined && obj.productId !== null ? Number(obj.productId) : null;
+    const productId =
+      rawProductId !== null && Number.isInteger(rawProductId) && rawProductId > 0
+        ? rawProductId
+        : null;
+    const rawSku = typeof obj.sku === 'string' ? obj.sku.trim() : '';
+    const sku = rawSku && rawSku !== '—' ? rawSku : null;
+    const productName = typeof obj.productName === 'string' ? obj.productName.trim() : '';
+
+    const key = toKey({ productId, sku, productName, quantity: qty });
+    const count = existingCounts.get(key) ?? 0;
+    if (count <= 0) return false;
+    existingCounts.set(key, count - 1);
+  }
+
+  return true;
+}
+
 const ASSIGNABLE_ORDER_STATUSES: OrderStatus[] = [
   OrderStatus.PACKED,
   OrderStatus.DELIVERING,
@@ -625,23 +693,58 @@ export const updateOrder = async (req: Request, res: Response) => {
       });
     }
 
-    const { items: normalizedItems, error: itemsError } = await resolveAndValidateItems(
-      items,
-      true
-    );
-    if (itemsError || !normalizedItems) {
-      return res.status(400).json({ success: false, message: itemsError });
+    const canEditItems = existingOrder.status === OrderStatus.NEW;
+    let normalizedItems: NormalizedOrderItem[] | undefined;
+    let computedTotal: number | undefined;
+
+    if (canEditItems) {
+      if (items !== undefined) {
+        const resolved = await resolveAndValidateItems(items, true);
+        if (resolved.error || !resolved.items) {
+          return res.status(400).json({ success: false, message: resolved.error });
+        }
+        normalizedItems = resolved.items;
+        computedTotal = normalizedItems.reduce(
+          (sum, item) => sum + item.price * item.quantity,
+          0
+        );
+      }
+    } else if (items !== undefined && !areOrderItemsUnchanged(existingOrder.items, items)) {
+      return res.status(400).json({
+        success: false,
+        message: `Không thể chỉnh sửa sản phẩm của đơn hàng ở trạng thái ${existingOrder.status}. Chỉ cho phép sửa sản phẩm khi đơn hàng đang ở trạng thái NEW.`,
+      });
     }
 
-    const computedTotal = normalizedItems.reduce(
-      (sum, item) => sum + item.price * item.quantity,
-      0
-    );
-
     const updatedOrder = await prisma.$transaction(async (tx) => {
-      // Restore old items back to the original depot, then deduct new items from the target depot
-      await restoreDepotStock(tx, existingOrder.storeId, existingOrder.items);
-      await deductDepotStock(tx, targetStore.id, targetStore.name, normalizedItems);
+      const currentOrder = await tx.order.findUnique({
+        where: { id },
+        include: { items: true },
+      });
+
+      if (!currentOrder) {
+        return null;
+      }
+
+      const itemsWillChange =
+        normalizedItems !== undefined &&
+        !areOrderItemsUnchanged(currentOrder.items, normalizedItems);
+
+      if (itemsWillChange && currentOrder.status !== OrderStatus.NEW) {
+        throw new OrderItemsLockedError(currentOrder.status, 409);
+      }
+
+      const storeChanged = targetStore.id !== currentOrder.storeId;
+
+      if (normalizedItems !== undefined && currentOrder.status === OrderStatus.NEW) {
+        // Restore old items back to the original depot, then deduct new items from the target depot
+        await restoreDepotStock(tx, currentOrder.storeId, currentOrder.items);
+        await deductDepotStock(tx, targetStore.id, targetStore.name, normalizedItems);
+      } else if (storeChanged) {
+        // Items are unchanged, only move stock between depots
+        await restoreDepotStock(tx, currentOrder.storeId, currentOrder.items);
+        await deductDepotStock(tx, targetStore.id, targetStore.name, currentOrder.items);
+      }
 
       return tx.order.update({
         where: { id },
@@ -652,21 +755,31 @@ export const updateOrder = async (req: Request, res: Response) => {
           customerAddress: trimmedAddress,
           latitude: parsedLat,
           longitude: parsedLng,
-          totalAmount: computedTotal,
+          ...(computedTotal !== undefined && currentOrder.status === OrderStatus.NEW
+            ? { totalAmount: computedTotal }
+            : {}),
           paymentMethod: resolvedPaymentMethod,
           paymentStatus: resolvedPaymentStatus,
           paidAt: resolvedPaidAt,
           paymentReference: resolvedPaymentReference,
           deliveryDate: resolvedDeliveryDate,
           hourDelivery: resolvedHourDelivery,
-          items: {
-            deleteMany: {},
-            create: normalizedItems,
-          },
+          ...(normalizedItems !== undefined && currentOrder.status === OrderStatus.NEW
+            ? {
+                items: {
+                  deleteMany: {},
+                  create: normalizedItems,
+                },
+              }
+            : {}),
         },
         include: ORDER_WITH_RELATIONS_INCLUDE,
       });
     });
+
+    if (!updatedOrder) {
+      return res.status(404).json({ success: false, message: 'Không tìm thấy đơn hàng.' });
+    }
 
     res.json({
       success: true,
@@ -674,6 +787,12 @@ export const updateOrder = async (req: Request, res: Response) => {
       data: updatedOrder,
     });
   } catch (error: any) {
+    if (error instanceof OrderItemsLockedError) {
+      return res.status(error.statusCode).json({
+        success: false,
+        message: error.message,
+      });
+    }
     if (error instanceof InsufficientStockError) {
       return res.status(error.statusCode).json({
         success: false,

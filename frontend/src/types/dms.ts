@@ -358,6 +358,10 @@ export function isOrderEditable(status: OrderStatus): boolean {
   return EDITABLE_ORDER_STATUSES.includes(status);
 }
 
+export function isOrderItemsEditable(status: OrderStatus): boolean {
+  return status === 'NEW';
+}
+
 export function isOrderCancellable(status: OrderStatus): boolean {
   return status === 'NEW';
 }

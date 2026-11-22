@@ -316,7 +316,33 @@ export async function cancelOrDeleteTrip(
   };
 }
 
-function serializeOrderPayload(form: OrderFormState, fallbackStoreId?: number) {
+function serializeOrderPayload(
+  form: OrderFormState,
+  fallbackStoreId?: number,
+  includeItems = true
+) {
+  const parsedStoreId = Number(form.storeId);
+  const storeId =
+    Number.isInteger(parsedStoreId) && parsedStoreId > 0 ? parsedStoreId : fallbackStoreId;
+
+  const basePayload = {
+    ...(storeId ? { storeId } : {}),
+    customerName: form.customerName.trim(),
+    customerPhone: form.customerPhone.trim(),
+    customerAddress: form.customerAddress.trim(),
+    latitude: Number(form.latitude),
+    longitude: Number(form.longitude),
+    paymentMethod: form.paymentMethod,
+    paymentStatus: form.paymentStatus,
+    paymentReference: form.paymentReference.trim() || null,
+    deliveryDate: form.deliveryDate,
+    hourDelivery: Number(form.hourDelivery),
+  };
+
+  if (!includeItems) {
+    return basePayload;
+  }
+
   const items = form.items.map((item) => ({
     productId: item.productId ?? undefined,
     sku: item.sku && item.sku !== '—' ? item.sku.trim() : undefined,
@@ -324,33 +350,29 @@ function serializeOrderPayload(form: OrderFormState, fallbackStoreId?: number) {
     quantity: Number(item.quantity),
     price: Number(item.price),
   }));
-  const parsedStoreId = Number(form.storeId);
-  const storeId =
-    Number.isInteger(parsedStoreId) && parsedStoreId > 0 ? parsedStoreId : fallbackStoreId;
+
   return {
-    ...(storeId ? { storeId } : {}),
-    customerName: form.customerName.trim(),
-    customerPhone: form.customerPhone.trim(),
-    customerAddress: form.customerAddress.trim(),
-    latitude: Number(form.latitude),
-    longitude: Number(form.longitude),
+    ...basePayload,
     totalAmount: computeOrderFormTotal(form.items),
-    paymentMethod: form.paymentMethod,
-    paymentStatus: form.paymentStatus,
-    paymentReference: form.paymentReference.trim() || null,
-    deliveryDate: form.deliveryDate,
-    hourDelivery: Number(form.hourDelivery),
     items,
   };
 }
 
 export async function createOrder(storeId: number, form: OrderFormState): Promise<Order> {
-  const res = await httpClient.post('/orders', serializeOrderPayload(form, storeId));
+  const res = await httpClient.post('/orders', serializeOrderPayload(form, storeId, true));
   return res.data.data as Order;
 }
 
-export async function updateOrder(orderId: number, form: OrderFormState): Promise<Order> {
-  const res = await httpClient.put(`/orders/${orderId}`, serializeOrderPayload(form));
+export async function updateOrder(
+  orderId: number,
+  form: OrderFormState,
+  options?: { includeItems?: boolean }
+): Promise<Order> {
+  const includeItems = options?.includeItems ?? true;
+  const res = await httpClient.put(
+    `/orders/${orderId}`,
+    serializeOrderPayload(form, undefined, includeItems)
+  );
   return res.data.data as Order;
 }
 

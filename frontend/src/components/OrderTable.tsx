@@ -6,6 +6,7 @@ import {
   Columns3,
   CreditCard,
   Layers,
+  ListFilter,
   Navigation,
   Package,
   PackageCheck,
@@ -28,6 +29,7 @@ import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog';
 import { Heading } from '@astryxdesign/core/Heading';
 import { IconButton } from '@astryxdesign/core/IconButton';
 import { Layout, LayoutContent, LayoutFooter } from '@astryxdesign/core/Layout';
+import { MultiSelector } from '@astryxdesign/core/MultiSelector';
 import { Selector } from '@astryxdesign/core/Selector';
 import { Stack } from '@astryxdesign/core/Stack';
 import { Tab, TabList } from '@astryxdesign/core/TabList';
@@ -70,6 +72,7 @@ import {
   toIsoDateString,
   type BulkOrderActionType,
   type Order,
+  type OrderStatus,
   type PaymentStatus,
   type Role,
 } from '../types/dms';
@@ -147,8 +150,8 @@ interface OrderTableProps {
   role: Role;
   filteredOrders: Order[];
   counts: Record<string, number>;
-  statusFilter: string;
-  onStatusFilterChange: (status: string) => void;
+  statusFilters: OrderStatus[];
+  onStatusFiltersChange: (statuses: OrderStatus[]) => void;
   paymentMethodFilter: string;
   onPaymentMethodFilterChange: (method: string) => void;
   paymentStatusFilter: string;
@@ -194,8 +197,8 @@ export function OrderTable({
   role,
   filteredOrders,
   counts,
-  statusFilter,
-  onStatusFilterChange,
+  statusFilters,
+  onStatusFiltersChange,
   paymentMethodFilter,
   onPaymentMethodFilterChange,
   paymentStatusFilter,
@@ -282,6 +285,35 @@ export function OrderTable({
   };
 
   const newAndPickingCount = (counts.NEW ?? 0) + (counts.PICKING ?? 0);
+
+  const statusSelectorOptions = useMemo(
+    () =>
+      STATUS_TABS.filter(
+        (tab): tab is Exclude<(typeof STATUS_TABS)[number], { key: 'ALL' }> => tab.key !== 'ALL'
+      ).map((tab) => ({
+        value: tab.key,
+        label: tab.label,
+      })),
+    []
+  );
+
+  const activeStatusTab = useMemo(() => {
+    if (statusFilters.length === 0 || statusFilters.length === statusSelectorOptions.length) {
+      return 'ALL';
+    }
+    if (statusFilters.length === 1) {
+      return statusFilters[0];
+    }
+    return '';
+  }, [statusFilters, statusSelectorOptions.length]);
+
+  const handleStatusTabChange = (nextTab: string) => {
+    if (nextTab === 'ALL') {
+      onStatusFiltersChange([]);
+    } else {
+      onStatusFiltersChange([nextTab as OrderStatus]);
+    }
+  };
 
   const selectedIdSet = useMemo(() => new Set(selectedOrderIds), [selectedOrderIds]);
 
@@ -468,6 +500,40 @@ export function OrderTable({
               />
             </div>
 
+            <MultiSelector
+              label="Trạng thái đơn hàng"
+              isLabelHidden
+              variant="secondary"
+              size="sm"
+              width={205}
+              startIcon={<ListFilter className="w-3.5 h-3.5" />}
+              placeholder="Tất cả trạng thái"
+              hasClear
+              hasSelectAll
+              selectAllLabel="Chọn tất cả trạng thái"
+              triggerDisplay="count"
+              formatValue={(items) => {
+                if (items.length === statusSelectorOptions.length) {
+                  return 'Tất cả trạng thái';
+                }
+                if (items.length === 1) {
+                  return items[0].label;
+                }
+                return `${items.length} trạng thái`;
+              }}
+              options={statusSelectorOptions}
+              value={statusFilters}
+              onChange={(vals) => onStatusFiltersChange(vals as OrderStatus[])}
+              renderOption={(option) => (
+                <Stack direction="horizontal" align="center" justify="between" gap={2} width="100%">
+                  <Text size="sm">{option.label}</Text>
+                  <Text type="supporting" size="2xs" hasTabularNumbers>
+                    {counts[option.value] ?? 0}
+                  </Text>
+                </Stack>
+              )}
+            />
+
             <DateInput
               label="Ngày giao hàng"
               isLabelHidden
@@ -558,8 +624,8 @@ export function OrderTable({
         <div className="flex flex-col">
           <div className="px-4 pt-2 border-b border-border flex flex-wrap items-center justify-between gap-2">
             <TabList
-              value={statusFilter}
-              onChange={onStatusFilterChange}
+              value={activeStatusTab}
+              onChange={handleStatusTabChange}
               size="sm"
               aria-label="Lọc đơn hàng theo trạng thái"
             >

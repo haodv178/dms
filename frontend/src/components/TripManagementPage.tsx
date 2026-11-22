@@ -115,7 +115,7 @@ export function TripManagementPage({
   onFailDelivery,
   onOpenRejectDelivery,
 }: TripManagementPageProps) {
-  const [statusFilter, setStatusFilter] = useState<string>('ALL');
+  const [statusFilter, setStatusFilter] = useState<string>('ASSIGNED');
   const [deliveryDateFilter, setDeliveryDateFilter] = useState<string>('');
   const [hourDeliveryFilter, setHourDeliveryFilter] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -222,7 +222,7 @@ export function TripManagementPage({
     const created = await onCreateTrip(storeId, orderIds, driverId);
     if (created) {
       setShowCreateModal(false);
-      setStatusFilter('ALL');
+      setStatusFilter(created.status ?? 'ASSIGNED');
       setSelectedTripId(created.id);
     }
   };
@@ -266,73 +266,73 @@ export function TripManagementPage({
     }
   };
 
+  const statusSummaryCards = [
+    {
+      key: 'ALL',
+      label: 'Tổng chuyến xe',
+      count: counts.ALL,
+      icon: <RouteIcon className="w-5 h-5" />,
+      iconColorClass: 'text-accent',
+    },
+    {
+      key: 'ASSIGNED',
+      label: 'Chờ xuất phát (ASSIGNED)',
+      count: counts.ASSIGNED,
+      icon: <Clock className="w-5 h-5" />,
+      iconColorClass: 'text-accent',
+    },
+    {
+      key: 'IN_TRANSIT',
+      label: 'Đang giao hàng (IN_TRANSIT)',
+      count: counts.IN_TRANSIT,
+      icon: <Truck className="w-5 h-5" />,
+      iconColorClass: 'text-accent',
+    },
+    {
+      key: 'COMPLETED',
+      label: 'Hoàn thành (COMPLETED)',
+      count: counts.COMPLETED,
+      icon: <CheckCircle2 className="w-5 h-5" />,
+      iconColorClass: 'text-success',
+    },
+  ] as const;
+
   return (
     <div className="flex flex-col gap-5">
       {/* KPI Summary Strip */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card padding={4}>
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex flex-col gap-0.5">
-              <Text type="supporting" size="xsm">
-                Tổng chuyến xe
-              </Text>
-              <Heading level={3} accessibilityLevel={2}>
-                {counts.ALL}
-              </Heading>
-            </div>
-            <div className="w-10 h-10 rounded-xl bg-muted flex items-center justify-center text-accent">
-              <RouteIcon className="w-5 h-5" />
-            </div>
-          </div>
-        </Card>
-
-        <Card padding={4}>
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex flex-col gap-0.5">
-              <Text type="supporting" size="xsm">
-                Chờ xuất phát (ASSIGNED)
-              </Text>
-              <Heading level={3} accessibilityLevel={2}>
-                {counts.ASSIGNED}
-              </Heading>
-            </div>
-            <div className="w-10 h-10 rounded-xl bg-muted flex items-center justify-center text-accent">
-              <Clock className="w-5 h-5" />
-            </div>
-          </div>
-        </Card>
-
-        <Card padding={4}>
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex flex-col gap-0.5">
-              <Text type="supporting" size="xsm">
-                Đang giao hàng (IN_TRANSIT)
-              </Text>
-              <Heading level={3} accessibilityLevel={2}>
-                {counts.IN_TRANSIT}
-              </Heading>
-            </div>
-            <div className="w-10 h-10 rounded-xl bg-muted flex items-center justify-center text-accent">
-              <Truck className="w-5 h-5" />
-            </div>
-          </div>
-        </Card>
-
-        <Card padding={4}>
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex flex-col gap-0.5">
-              <Text type="supporting" size="xsm">
-                Hoàn thành (COMPLETED)
-              </Text>
-              <Heading level={3} accessibilityLevel={2}>
-                {counts.COMPLETED}
-              </Heading>
-            </div>
-            <div className="w-10 h-10 rounded-xl bg-muted flex items-center justify-center text-success">
-              <CheckCircle2 className="w-5 h-5" />
-            </div>
-          </div>
-        </Card>
+        {statusSummaryCards.map((card) => {
+          const isActive = statusFilter === card.key;
+          return (
+            <button
+              key={card.key}
+              type="button"
+              onClick={() => setStatusFilter(card.key)}
+              aria-pressed={isActive}
+              className={`w-full text-left p-4 rounded-xl border transition-colors cursor-pointer ${
+                isActive
+                  ? 'border-accent bg-accent-muted/30 shadow-xs'
+                  : 'border-border bg-surface hover:bg-muted'
+              }`}
+            >
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex flex-col gap-0.5">
+                  <Text type="supporting" size="xsm">
+                    {card.label}
+                  </Text>
+                  <Heading level={3} accessibilityLevel={2}>
+                    {card.count}
+                  </Heading>
+                </div>
+                <div
+                  className={`w-10 h-10 rounded-xl bg-muted flex items-center justify-center ${card.iconColorClass}`}
+                >
+                  {card.icon}
+                </div>
+              </div>
+            </button>
+          );
+        })}
       </div>
 
       {/* Master-Detail Split Layout */}
@@ -445,7 +445,10 @@ export function TripManagementPage({
                     Chưa có chuyến xe nào
                   </Text>
                   <Text type="supporting" size="xsm">
-                    {searchQuery.trim()
+                    {searchQuery.trim() ||
+                    deliveryDateFilter ||
+                    hourDeliveryFilter !== 'ALL' ||
+                    (statusFilter !== 'ALL' && trips.length > 0)
                       ? 'Không tìm thấy chuyến xe khớp với bộ lọc hiện tại.'
                       : 'Bấm "Tạo chuyến mới" để tối ưu lộ trình từ các đơn PACKED bằng Google OR-Tools.'}
                   </Text>
