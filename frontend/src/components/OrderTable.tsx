@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
+  ArrowDown,
   Ban,
   CheckCircle2,
   Clock,
@@ -30,9 +31,9 @@ import { Heading } from '@astryxdesign/core/Heading';
 import { IconButton } from '@astryxdesign/core/IconButton';
 import { Layout, LayoutContent, LayoutFooter } from '@astryxdesign/core/Layout';
 import { MultiSelector } from '@astryxdesign/core/MultiSelector';
+import { Pagination } from '@astryxdesign/core/Pagination';
 import { Selector } from '@astryxdesign/core/Selector';
 import { Stack } from '@astryxdesign/core/Stack';
-import { Tab, TabList } from '@astryxdesign/core/TabList';
 import {
   Table,
   TableBody,
@@ -119,6 +120,8 @@ const ORDER_TABLE_COLUMNS: readonly OrderColumnDefinition[] = [
 
 const ALL_ORDER_COLUMN_KEYS: readonly OrderColumnKey[] = ORDER_TABLE_COLUMNS.map((c) => c.key);
 const ORDER_COLUMNS_STORAGE_KEY = 'dms-order-table-visible-columns';
+const ORDER_PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
+const DEFAULT_ORDER_PAGE_SIZE = 20;
 
 function readStoredVisibleColumns(): OrderColumnKey[] {
   try {
@@ -234,6 +237,8 @@ export function OrderTable({
   const [paymentSaving, setPaymentSaving] = useState(false);
   const [visibleColumns, setVisibleColumns] = useState<OrderColumnKey[]>(readStoredVisibleColumns);
   const [showColumnConfig, setShowColumnConfig] = useState<boolean>(false);
+  const [page, setPage] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number>(DEFAULT_ORDER_PAGE_SIZE);
 
   const isAdmin = role === 'ADMIN';
 
@@ -297,47 +302,79 @@ export function OrderTable({
     []
   );
 
-  const activeStatusTab = useMemo(() => {
-    if (statusFilters.length === 0 || statusFilters.length === statusSelectorOptions.length) {
-      return 'ALL';
-    }
-    if (statusFilters.length === 1) {
-      return statusFilters[0];
-    }
-    return '';
-  }, [statusFilters, statusSelectorOptions.length]);
+  const sortedFilteredOrders = useMemo(() => {
+    return [...filteredOrders].sort((a, b) => {
+      const timeB = Date.parse(b.createdAt);
+      const timeA = Date.parse(a.createdAt);
+      const safeB = Number.isFinite(timeB) ? timeB : 0;
+      const safeA = Number.isFinite(timeA) ? timeA : 0;
+      if (safeB !== safeA) return safeB - safeA;
+      return b.id - a.id;
+    });
+  }, [filteredOrders]);
 
-  const handleStatusTabChange = (nextTab: string) => {
-    if (nextTab === 'ALL') {
-      onStatusFiltersChange([]);
-    } else {
-      onStatusFiltersChange([nextTab as OrderStatus]);
+  const totalOrders = sortedFilteredOrders.length;
+  const totalPages = Math.max(1, Math.ceil(totalOrders / pageSize));
+  const safePage = Math.min(page, totalPages);
+
+  useEffect(() => {
+    setPage(1);
+  }, [
+    statusFilters,
+    paymentMethodFilter,
+    paymentStatusFilter,
+    deliveryDateFilter,
+    hourDeliveryFilter,
+    searchQuery,
+  ]);
+
+  useEffect(() => {
+    if (page > totalPages) {
+      setPage(totalPages);
     }
+  }, [page, totalPages]);
+
+  const paginatedOrders = useMemo(() => {
+    const start = (safePage - 1) * pageSize;
+    return sortedFilteredOrders.slice(start, start + pageSize);
+  }, [sortedFilteredOrders, safePage, pageSize]);
+
+  const startItem = totalOrders === 0 ? 0 : (safePage - 1) * pageSize + 1;
+  const endItem = Math.min(safePage * pageSize, totalOrders);
+
+  const handlePageSizeChange = (nextSize: number) => {
+    setPageSize(nextSize);
+    setPage(1);
   };
 
   const selectedIdSet = useMemo(() => new Set(selectedOrderIds), [selectedOrderIds]);
 
   const selectedVisibleOrders = useMemo(
-    () => filteredOrders.filter((o) => selectedIdSet.has(o.id)),
-    [filteredOrders, selectedIdSet]
+    () => sortedFilteredOrders.filter((o) => selectedIdSet.has(o.id)),
+    [sortedFilteredOrders, selectedIdSet]
   );
 
-  const visibleOrderIds = useMemo(
-    () => filteredOrders.map((o) => o.id),
-    [filteredOrders]
+  const pageOrderIds = useMemo(
+    () => paginatedOrders.map((o) => o.id),
+    [paginatedOrders]
+  );
+
+  const selectedOnPageCount = useMemo(
+    () => paginatedOrders.filter((o) => selectedIdSet.has(o.id)).length,
+    [paginatedOrders, selectedIdSet]
   );
 
   const allVisibleSelected =
-    visibleOrderIds.length > 0 && selectedVisibleOrders.length === visibleOrderIds.length;
+    pageOrderIds.length > 0 && selectedOnPageCount === pageOrderIds.length;
   const someVisibleSelected =
-    selectedVisibleOrders.length > 0 && selectedVisibleOrders.length < visibleOrderIds.length;
+    selectedOnPageCount > 0 && selectedOnPageCount < pageOrderIds.length;
 
   const toggleSelectAllVisible = () => {
     if (allVisibleSelected) {
-      const visibleSet = new Set(visibleOrderIds);
-      onSelectedOrderIdsChange(selectedOrderIds.filter((id) => !visibleSet.has(id)));
+      const pageSet = new Set(pageOrderIds);
+      onSelectedOrderIdsChange(selectedOrderIds.filter((id) => !pageSet.has(id)));
     } else {
-      const merged = Array.from(new Set([...selectedOrderIds, ...visibleOrderIds]));
+      const merged = Array.from(new Set([...selectedOrderIds, ...pageOrderIds]));
       onSelectedOrderIdsChange(merged);
     }
   };
@@ -619,42 +656,20 @@ export function OrderTable({
         </div>
       </Card>
 
-      {/* Filter Tabs, Contextual Bulk Toolbar & Orders Table */}
+      {/* Contextual Bulk Toolbar & Orders Table */}
       <Card padding={0}>
         <div className="flex flex-col">
-          <div className="px-4 pt-2 border-b border-border flex flex-wrap items-center justify-between gap-2">
-            <TabList
-              value={activeStatusTab}
-              onChange={handleStatusTabChange}
-              size="sm"
-              aria-label="Lọc đơn hàng theo trạng thái"
-            >
-              {STATUS_TABS.map((tab) => (
-                <Tab
-                  key={tab.key}
-                  value={tab.key}
-                  label={tab.label}
-                  endContent={
-                    <Text type="supporting" size="2xs" hasTabularNumbers>
-                      {counts[tab.key] ?? 0}
-                    </Text>
-                  }
-                />
-              ))}
-            </TabList>
-
-            {isAdmin && (
-              <div className="pb-2">
-                <Button
-                  label={`Cột hiển thị (${visibleColumns.length}/${ORDER_TABLE_COLUMNS.length})`}
-                  variant={showColumnConfig ? 'primary' : 'secondary'}
-                  size="sm"
-                  icon={<Columns3 className="w-3.5 h-3.5" />}
-                  onClick={() => setShowColumnConfig((prev) => !prev)}
-                />
-              </div>
-            )}
-          </div>
+          {isAdmin && (
+            <div className="px-4 py-2.5 border-b border-border flex flex-wrap items-center justify-start gap-2">
+              <Button
+                label={`Cột hiển thị (${visibleColumns.length}/${ORDER_TABLE_COLUMNS.length})`}
+                variant={showColumnConfig ? 'primary' : 'secondary'}
+                size="sm"
+                icon={<Columns3 className="w-3.5 h-3.5" />}
+                onClick={() => setShowColumnConfig((prev) => !prev)}
+              />
+            </div>
+          )}
 
           {/* Admin Column Visibility Panel */}
           {isAdmin && showColumnConfig && (
@@ -880,7 +895,10 @@ export function OrderTable({
                     )}
                     {isColumnVisible('createdAt') && (
                       <TableHeaderCell className="min-w-36 whitespace-nowrap">
-                        Ngày tạo
+                        <Stack direction="horizontal" align="center" gap={1}>
+                          Ngày tạo
+                          <ArrowDown className="w-3.5 h-3.5 text-accent" />
+                        </Stack>
                       </TableHeaderCell>
                     )}
                     {isColumnVisible('customerName') && (
@@ -936,7 +954,7 @@ export function OrderTable({
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredOrders.map((order) => {
+                  {paginatedOrders.map((order) => {
                     const statusMeta = STATUS_CONFIG[order.status];
                     const paymentMethodMeta =
                       PAYMENT_METHOD_CONFIG[order.paymentMethod ?? 'COD'];
@@ -1299,6 +1317,33 @@ export function OrderTable({
               </Table>
             )}
           </div>
+
+          {totalOrders > 0 && (
+            <div className="px-4 py-3 border-t border-border flex flex-wrap items-center justify-between gap-3">
+              <Text type="supporting" size="xsm" hasTabularNumbers>
+                Trang{' '}
+                <Text type="label" size="xsm" color="primary" hasTabularNumbers>
+                  {safePage}
+                </Text>{' '}
+                / {totalPages} ({startItem.toLocaleString('vi-VN')}–
+                {endItem.toLocaleString('vi-VN')} trên{' '}
+                {totalOrders.toLocaleString('vi-VN')} đơn hàng)
+              </Text>
+
+              <Pagination
+                page={safePage}
+                totalItems={totalOrders}
+                pageSize={pageSize}
+                pageSizeOptions={ORDER_PAGE_SIZE_OPTIONS}
+                variant="pages"
+                size="sm"
+                isDisabled={loading}
+                label="Phân trang danh sách đơn hàng"
+                onChange={setPage}
+                onPageSizeChange={handlePageSizeChange}
+              />
+            </div>
+          )}
         </div>
       </Card>
 

@@ -103,26 +103,11 @@ import {
   type StoreFormState,
   type StorePagination,
   type StoreSummary,
-  type ThemeMode,
   type Trip,
   type UserFormState,
   type UserPagination,
   type UserSummary,
 } from './types/dms';
-
-const THEME_MODE_STORAGE_KEY = 'dms-astryx-theme-mode';
-
-function readStoredThemeMode(): ThemeMode {
-  try {
-    const saved = window.localStorage.getItem(THEME_MODE_STORAGE_KEY);
-    if (saved === 'light' || saved === 'dark' || saved === 'system') {
-      return saved;
-    }
-  } catch {
-    // Ignore storage access errors
-  }
-  return 'system';
-}
 
 interface DmsDashboardProps {
   user: AuthUser;
@@ -972,8 +957,11 @@ function DmsDashboard({
 
   const sortedOrders = useMemo(() => {
     return [...orders].sort((a, b) => {
-      const diff = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-      if (diff !== 0) return diff;
+      const timeB = Date.parse(b.createdAt);
+      const timeA = Date.parse(a.createdAt);
+      const safeB = Number.isFinite(timeB) ? timeB : 0;
+      const safeA = Number.isFinite(timeA) ? timeA : 0;
+      if (safeB !== safeA) return safeB - safeA;
       return b.id - a.id;
     });
   }, [orders]);
@@ -1860,25 +1848,10 @@ function AppGate({
 }
 
 export default function App() {
-  const [themeMode] = useState<ThemeMode>(readStoredThemeMode);
-  const [systemPrefersDark, setSystemPrefersDark] = useState<boolean>(() =>
-    typeof window !== 'undefined'
-      ? window.matchMedia('(prefers-color-scheme: dark)').matches
-      : false
-  );
-
-  useEffect(() => {
-    const media = window.matchMedia('(prefers-color-scheme: dark)');
-    const handler = (event: MediaQueryListEvent) => setSystemPrefersDark(event.matches);
-    media.addEventListener('change', handler);
-    return () => media.removeEventListener('change', handler);
-  }, []);
-
-  const isDarkMode =
-    themeMode === 'dark' || (themeMode === 'system' && systemPrefersDark);
+  const isDarkMode = false;
 
   return (
-    <Theme theme={themes[defaultThemeSlug]} mode={themeMode}>
+    <Theme theme={themes[defaultThemeSlug]} mode="light">
       <LayerProvider>
         <AuthProvider>
           <AppGate isDarkMode={isDarkMode} />
