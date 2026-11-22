@@ -7,7 +7,7 @@
 ## Mục Lục
 
 1. [Khởi Chạy Toàn Bộ Hệ Thống (Docker Compose)](#1-khởi-chạy-toàn-bộ-hệ-thống-docker-compose)
-2. [Nạp Dữ Liệu Mẫu Qua CLI](#2-nạp-dữ-liệu-mẫu-qua-cli)
+2. [Nạp Dữ Liệu Mẫu & Tra Cứu Lệnh Qua CLI](#2-nạp-dữ-liệu-mẫu--tra-cứu-lệnh-qua-cli)
 3. [Phát Triển Frontend & Astryx CLI (Local)](#3-phát-triển-frontend--astryx-cli-local)
 4. [Các Lệnh Tự Kiểm Chứng Bằng cURL](#4-các-lệnh-tự-kiểm-chứng-bằng-curl)
 5. [Kịch Bản Kiểm Thử & Demo End-to-End](#5-kịch-bản-kiểm-thử--demo-end-to-end)
@@ -42,10 +42,26 @@ Sau khi khởi động thành công:
 
 ---
 
-## 2. Nạp Dữ Liệu Mẫu Qua CLI
+## 2. Nạp Dữ Liệu Mẫu & Tra Cứu Lệnh Qua CLI
+
+### Liệt kê toàn bộ lệnh hiện có trong dự án
+Lệnh này tự động đọc danh sách script từ thư mục gốc (`*.sh`), `backend/package.json` và `frontend/package.json`:
+
+```bash
+# Liệt kê tất cả lệnh (chạy từ thư mục gốc)
+./commands.sh
+# hoặc
+npm --prefix backend run commands
+
+# Lọc theo nhóm hoặc xuất JSON
+./commands.sh --root
+./commands.sh --backend
+./commands.sh --frontend
+./commands.sh --json
+```
 
 ### Sinh nhanh đơn hàng mẫu
-Tọa độ GPS tự động sinh hợp lệ trong bán kính **5 km** quanh các kho đang hoạt động:
+Tọa độ GPS tự động sinh hợp lệ trong bán kính **5 km** quanh các kho đang hoạt động. Dữ liệu khách hàng được sinh ngẫu nhiên và tự nhiên gồm 40 họ phổ biến, tên đệm & tên theo giới tính, 30 đầu số di động Việt Nam, cùng địa chỉ thực tế đồng bộ theo phường/đường/chung cư/hẻm thuộc **18 quận, huyện và TP. Thủ Đức (TP.HCM)**:
 
 ```bash
 # Sinh 20 đơn hàng mẫu (mặc định)

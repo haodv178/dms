@@ -10,7 +10,8 @@
     "db:push": "prisma db push --schema=prisma/schema.prisma",
     "seed": "ts-node prisma/seed.ts",
     "seed:orders": "ts-node prisma/seed-orders.ts",
-    "seed:products1000": "ts-node prisma/seed-1000-products.ts"
+    "seed:products1000": "ts-node prisma/seed-1000-products.ts",
+    "commands": "ts-node scripts/list-commands.ts"
   },
   "prisma": {
     "schema": "prisma/schema.prisma",
