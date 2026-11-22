@@ -66,15 +66,16 @@ Base URL local: `http://localhost:3000/api`
 
 | Method | Endpoint | Phân quyền | Mô tả |
 | :--- | :--- | :--- | :--- |
-| `GET` | `/api/orders` | `ADMIN`, `WAREHOUSE`, `DRIVER` | Danh sách đơn hàng sắp xếp `createdAt DESC` (tie-breaker `id DESC`), lọc `?status=NEW\|PICKING\|PACKED\|DELIVERING\|COMPLETED\|FAILED`, `?paymentMethod=COD\|CREDIT_CARD\|MOMO\|BANK_TRANSFER\|ZALOPAY\|VNPAY`, `?paymentStatus=UNPAID\|PAID\|REFUNDED`. `DRIVER` chỉ thấy đơn của mình |
+| `GET` | `/api/orders` | `ADMIN`, `WAREHOUSE`, `DRIVER` | Danh sách đơn hàng sắp xếp `createdAt DESC` (tie-breaker `id DESC`), lọc `?status=NEW\|PICKING\|PACKED\|DELIVERING\|COMPLETED\|PARTIALLY_REJECTED\|REJECTED\|FAILED\|CANCELLED`, `?paymentMethod=COD\|CREDIT_CARD\|MOMO\|BANK_TRANSFER\|ZALOPAY\|VNPAY`, `?paymentStatus=UNPAID\|PAID\|REFUNDED`. `DRIVER` chỉ thấy đơn của mình |
 | `GET` | `/api/orders/:id` | `ADMIN`, `WAREHOUSE`, `DRIVER` | Chi tiết đơn hàng kèm `items` (có scoping cho `DRIVER`) |
 | `POST` | `/api/orders` | `ADMIN` | Tạo đơn mới (mặc định dùng depot `isDefault`). Chặn `400` nếu Haversine > 5 km hoặc thiếu tồn kho tại `DepotStock`; trừ tồn atomic trong transaction; tự tra cứu giá từ `Product` và tính `totalAmount`. Hỗ trợ `paymentMethod` (mặc định `COD`), `paymentStatus` (`COD` ➔ `UNPAID`, online ➔ `PAID`), và `paymentReference` |
 | `PUT` | `/api/orders/:id` | `ADMIN` | Sửa đơn ở trạng thái `NEW` / `PICKING` / `PACKED` (trả `400` nếu đã `DELIVERING`/`COMPLETED`/`FAILED`). Hỗ trợ đổi depot, cập nhật `paymentMethod`/`paymentStatus`/`paymentReference`, kiểm tra ≤ 5 km, hoàn tồn depot cũ & trừ tồn depot mới trong cùng transaction |
 | `PATCH` | `/api/orders/:id/payment-status` | `ADMIN` | Cập nhật `paymentStatus` (`UNPAID` / `PAID` / `REFUNDED`) và `paymentReference` (tùy chọn) ở **mọi trạng thái đơn**; tự động đồng bộ `paidAt` |
-| `PATCH` | `/api/orders/:id/start-picking` | `ADMIN`, `WAREHOUSE` | Chuyển `NEW` ➔ `PICKING` |
+| `PATCH` | `/api/orders/:id/cancel` | `ADMIN` | Hủy đơn ở trạng thái `NEW` (`NEW` ➔ `CANCELLED`) với `{ reason? }`; hoàn tồn kho atomic về depot và nhắc hoàn tiền nếu đơn đã thanh toán trước (`PAID`) (chi tiết tại `docs/ORDER_CANCELLATION.md`) |
+| `PATCH` | `/api/orders/:id/start-picking` | `ADMIN`, `WAREHOUSE` | Chuyển `NEW` ➔ `PICKING` (chặn `400` nếu đơn không ở trạng thái `NEW`) |
 | `PATCH` | `/api/orders/:id/complete-packing` | `ADMIN`, `WAREHOUSE` | Chuyển `PICKING` ➔ `PACKED` |
 | `PATCH` | `/api/orders/:id/assign-driver` | `ADMIN` | Gán/đổi (`{ "driverId": 3 }`) hoặc bỏ gán (`{ "driverId": null }`) tài xế trực tiếp (chi tiết bên dưới) |
-| `POST` | `/api/orders/bulk-action` | `ADMIN`, `WAREHOUSE` | Thực hiện thao tác hàng loạt `{ action, orderIds, driverId? }` trong một transaction (chi tiết bên dưới) |
+| `POST` | `/api/orders/bulk-action` | `ADMIN`, `WAREHOUSE` | Thực hiện thao tác hàng loạt `{ action, orderIds, driverId?, reason? }` trong một transaction (chi tiết bên dưới) |
 | `PATCH` | `/api/orders/:id/complete-delivery` | `ADMIN`, `DRIVER` | Chuyển `DELIVERING` ➔ `COMPLETED`; tự đánh dấu `paymentStatus = PAID` (và `paidAt`) cho đơn `COD` đang `UNPAID`; tự đóng `Trip` (`COMPLETED`) và giải phóng tài xế về `AVAILABLE` khi hoàn tất đơn cuối |
 | `PATCH` | `/api/orders/:id/fail-delivery` | `ADMIN`, `DRIVER` | Chuyển `DELIVERING` ➔ `FAILED`; tự hoàn tồn kho về depot, đóng `Trip` và giải phóng tài xế nếu là đơn cuối (giữ nguyên `paymentStatus` để Admin chủ động đánh dấu `REFUNDED` nếu cần) |
 | `PATCH` | `/api/orders/:id/reject-delivery` | `ADMIN`, `DRIVER` | Ghi nhận khách hàng từ chối nhận hàng toàn bộ (`REJECTED`) hoặc một phần (`PARTIALLY_REJECTED`) với `{ reason, note?, rejectedItems }` (hoặc `rejectAll: true`); hoàn tồn kho ngay theo số lượng bị từ chối, lưu `rejectedAmount`, tự đánh dấu `PAID` cho đơn COD nhận một phần, giữ `PAID` cho đơn thanh toán trước để Admin đối soát hoàn tiền, và tự đóng `Trip` nếu không còn đơn `DELIVERING` (chi tiết tại `docs/ORDER_REJECTION.md`) |
@@ -85,7 +86,7 @@ Base URL local: `http://localhost:3000/api`
 - **Đồng bộ chuyến cũ:** Tự đánh lại thứ tự `1..N`, xóa `totalDistance` cũ, xóa chuyến rỗng (hoặc đóng `COMPLETED` nếu không còn đơn `DELIVERING`) và chuyển tài xế cũ về `AVAILABLE` nếu không còn chuyến hoạt động khác.
 
 **Chi tiết `POST /api/orders/bulk-action`:**
-- Hỗ trợ các `action`: `START_PICKING`, `COMPLETE_PACKING`, `ASSIGN_DRIVER`, `UNASSIGN_DRIVER`, `COMPLETE_DELIVERY`, `FAIL_DELIVERY` (trong đó `WAREHOUSE` chỉ được thực hiện `START_PICKING` và `COMPLETE_PACKING`).
+- Hỗ trợ các `action`: `START_PICKING`, `COMPLETE_PACKING`, `ASSIGN_DRIVER`, `UNASSIGN_DRIVER`, `COMPLETE_DELIVERY`, `FAIL_DELIVERY`, `CANCEL_ORDER` (trong đó `WAREHOUSE` chỉ được thực hiện `START_PICKING` và `COMPLETE_PACKING`; `CANCEL_ORDER` chỉ dành cho `ADMIN` đối với đơn `NEW`, hỗ trợ `reason?` và tự hoàn tồn kho về depot).
 - Kiểm tra điều kiện từng đơn phía server, tự động bỏ qua đơn không hợp lệ (hoặc khác depot khi `ASSIGN_DRIVER`), đồng bộ `Trip` và `DriverProfile` một lần, trả về `{ updatedCount, updatedOrders, skipped: [{ id, orderCode, reason }], message }`.
 
 ---
