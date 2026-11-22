@@ -122,17 +122,28 @@ resource solverApp 'Microsoft.App/containerApps@2024-03-01' = {
     configuration: {
       activeRevisionsMode: 'Single'
       ingress: {
-        external: false
+        external: true
         targetPort: 8090
-        allowInsecure: true
         transport: 'auto'
       }
+      secrets: [
+        {
+          name: 'solver-api-key'
+          value: jwtSecret
+        }
+      ]
     }
     template: {
       containers: [
         {
           name: 'python-solver'
           image: solverImage
+          env: [
+            {
+              name: 'SOLVER_API_KEY'
+              secretRef: 'solver-api-key'
+            }
+          ]
           resources: {
             cpu: json('0.5')
             memory: '1Gi'
@@ -246,7 +257,11 @@ resource backendApp 'Microsoft.App/containerApps@2024-03-01' = {
             }
             {
               name: 'PYTHON_SOLVER_URL'
-              value: 'http://${solverApp.name}'
+              value: 'https://${solverApp.properties.configuration.ingress.fqdn}'
+            }
+            {
+              name: 'SOLVER_API_KEY'
+              secretRef: 'jwt-secret'
             }
             {
               name: 'FRONTEND_ORIGIN'
@@ -299,7 +314,7 @@ resource backendApp 'Microsoft.App/containerApps@2024-03-01' = {
 }
 
 output backendUrl string = 'https://${backendApp.properties.configuration.ingress.fqdn}'
-output solverInternalUrl string = 'http://${solverApp.name}'
+output solverInternalUrl string = 'https://${solverApp.properties.configuration.ingress.fqdn}'
 output postgresHost string = postgresServer.properties.fullyQualifiedDomainName
 output frontendUrl string = frontendUrl
 output frontendAppName string = frontendApp.name

@@ -10,6 +10,11 @@ import {
 } from '../lib/timeslot';
 
 const PYTHON_SOLVER_URL = process.env.PYTHON_SOLVER_URL || 'http://localhost:8090';
+const SOLVER_API_KEY = process.env.SOLVER_API_KEY?.trim() || '';
+
+function getSolverHeaders() {
+  return SOLVER_API_KEY ? { 'x-solver-api-key': SOLVER_API_KEY } : undefined;
+}
 
 const TRIP_WITH_RELATIONS_INCLUDE = {
   store: true,
@@ -288,7 +293,9 @@ export const optimizeAndCreateTrip = async (req: Request, res: Response) => {
       num_vehicles: 1,
     };
 
-    const solverRes = await axios.post(`${PYTHON_SOLVER_URL}/solve-vrp`, payload);
+    const solverRes = await axios.post(`${PYTHON_SOLVER_URL}/solve-vrp`, payload, {
+      headers: getSolverHeaders(),
+    });
     if (solverRes.data.status !== 'SUCCESS') {
       return res.status(500).json({
         success: false,
@@ -685,7 +692,9 @@ export const reoptimizeTrip = async (req: Request, res: Response) => {
       num_vehicles: 1,
     };
 
-    const solverRes = await axios.post(`${PYTHON_SOLVER_URL}/solve-vrp`, payload);
+    const solverRes = await axios.post(`${PYTHON_SOLVER_URL}/solve-vrp`, payload, {
+      headers: getSolverHeaders(),
+    });
     if (solverRes.data.status !== 'SUCCESS') {
       return res.status(500).json({
         success: false,

@@ -1,9 +1,13 @@
+import hmac
+import math
+import os
 from typing import List, Optional
-from fastapi import FastAPI
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from ortools.constraint_solver import routing_enums_pb2, pywrapcp
-import math
+
+SOLVER_API_KEY = os.getenv("SOLVER_API_KEY", "").strip()
 
 app = FastAPI(title="DMS Route Solver (Google OR-Tools)")
 
@@ -34,7 +38,15 @@ def health():
 
 
 @app.post("/solve-vrp")
-def solve_vrp(req: VrpRequest):
+def solve_vrp(
+    req: VrpRequest,
+    x_solver_api_key: Optional[str] = Header(default=None),
+):
+    if SOLVER_API_KEY and not hmac.compare_digest(
+        x_solver_api_key or "", SOLVER_API_KEY
+    ):
+        raise HTTPException(status_code=401, detail="Unauthorized solver request")
+
     if not req.orders:
         return {"status": "FAILED", "message": "No orders provided"}
 
