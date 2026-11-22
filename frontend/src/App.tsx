@@ -6,6 +6,7 @@ import { defaultThemeSlug, themes } from './astryx-themes';
 import {
   assignDriverToOrder,
   bulkOrderAction,
+  cancelOrder,
   cancelOrDeleteTrip,
   completeDeliveryOrder,
   completePackingOrder,
@@ -599,6 +600,17 @@ function DmsDashboard({
     }
   };
 
+  const handleCancelOrder = async (orderId: number, reason?: string) => {
+    try {
+      const { message } = await cancelOrder(orderId, reason);
+      notify(message, 'info');
+      await Promise.all([loadAllData(), loadProductsPage(), loadStoresPage()]);
+    } catch (err) {
+      notify(getErrorMessage(err), 'error');
+      throw err;
+    }
+  };
+
   const handleCompletePacking = async (orderId: number) => {
     try {
       await completePackingOrder(orderId);
@@ -709,12 +721,13 @@ function DmsDashboard({
   const handleBulkOrderAction = async (
     action: BulkOrderActionType,
     orderIds: number[],
-    driverId?: number
+    driverId?: number,
+    reason?: string
   ) => {
     if (orderIds.length === 0) return;
     setBulkActionLoading(true);
     try {
-      const result = await bulkOrderAction(action, orderIds, driverId);
+      const result = await bulkOrderAction(action, orderIds, driverId, reason);
       notify(result.message, 'info');
       setSelectedOrderIds([]);
       setBulkAssignTarget(null);
@@ -1030,6 +1043,7 @@ function DmsDashboard({
       PARTIALLY_REJECTED: 0,
       REJECTED: 0,
       FAILED: 0,
+      CANCELLED: 0,
     };
     for (const o of orders) {
       map[o.status] = (map[o.status] || 0) + 1;
@@ -1525,6 +1539,7 @@ function DmsDashboard({
             onBatchPreparePacked={handleBatchPreparePacked}
             onBulkAction={handleBulkOrderAction}
             onEditOrder={handleOpenEditOrder}
+            onCancelOrder={handleCancelOrder}
             onUpdatePaymentStatus={handleUpdateOrderPaymentStatus}
             onStartPicking={handleStartPicking}
             onCompletePacking={handleCompletePacking}

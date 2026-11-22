@@ -10,7 +10,8 @@ export type OrderStatus =
   | 'COMPLETED'
   | 'PARTIALLY_REJECTED'
   | 'REJECTED'
-  | 'FAILED';
+  | 'FAILED'
+  | 'CANCELLED';
 
 export type RejectionReason =
   | 'NOT_AS_DESCRIBED'
@@ -307,6 +308,8 @@ export interface Order {
   rejectionNote?: string | null;
   rejectedAt?: string | null;
   rejectedAmount?: string | number;
+  cancelReason?: string | null;
+  cancelledAt?: string | null;
   items: OrderItem[];
   tripId: number | null;
   trip?: Trip | null;
@@ -355,6 +358,10 @@ export function isOrderEditable(status: OrderStatus): boolean {
   return EDITABLE_ORDER_STATUSES.includes(status);
 }
 
+export function isOrderCancellable(status: OrderStatus): boolean {
+  return status === 'NEW';
+}
+
 export function isOrderAssignable(status: OrderStatus): boolean {
   return ASSIGNABLE_ORDER_STATUSES.includes(status);
 }
@@ -365,7 +372,8 @@ export type BulkOrderActionType =
   | 'ASSIGN_DRIVER'
   | 'UNASSIGN_DRIVER'
   | 'COMPLETE_DELIVERY'
-  | 'FAIL_DELIVERY';
+  | 'FAIL_DELIVERY'
+  | 'CANCEL_ORDER';
 
 export interface BulkSkippedOrder {
   id: number;
@@ -385,6 +393,10 @@ export function canRolePickAndPack(role: Role): boolean {
 }
 
 export function canRoleEditOrders(role: Role): boolean {
+  return role === 'ADMIN';
+}
+
+export function canRoleCancelOrders(role: Role): boolean {
   return role === 'ADMIN';
 }
 
@@ -597,21 +609,34 @@ export function isOrderRejectedStatus(status: OrderStatus): boolean {
 }
 
 export function isOrderRefundPending(
-  order: Pick<Order, 'status' | 'paymentMethod' | 'paymentStatus' | 'rejectedAmount'>
+  order: Pick<Order, 'status' | 'paymentMethod' | 'paymentStatus' | 'rejectedAmount'> &
+    Partial<Pick<Order, 'totalAmount'>>
 ): boolean {
-  return (
-    isOrderRejectedStatus(order.status) &&
-    order.paymentMethod !== 'COD' &&
-    order.paymentStatus === 'PAID' &&
-    getOrderRejectedAmount(order) > 0
-  );
+  if (order.paymentMethod === 'COD' || order.paymentStatus !== 'PAID') {
+    return false;
+  }
+  if (order.status === 'CANCELLED') {
+    const total = Number(order.totalAmount ?? 0);
+    return Number.isFinite(total) && total > 0;
+  }
+  return isOrderRejectedStatus(order.status) && getOrderRejectedAmount(order) > 0;
+}
+
+export function getOrderRefundAmount(
+  order: Pick<Order, 'status' | 'totalAmount' | 'rejectedAmount'>
+): number {
+  if (order.status === 'CANCELLED') {
+    const total = Number(order.totalAmount) || 0;
+    return total > 0 ? total : 0;
+  }
+  return getOrderRejectedAmount(order);
 }
 
 export function getOrderCodAmount(
   order: Pick<Order, 'totalAmount' | 'paymentMethod' | 'paymentStatus'> &
     Partial<Pick<Order, 'status' | 'rejectedAmount'>>
 ): number {
-  if (order.status === 'REJECTED') {
+  if (order.status === 'REJECTED' || order.status === 'CANCELLED') {
     return 0;
   }
   const method = order.paymentMethod ?? 'COD';
@@ -784,6 +809,12 @@ export const STATUS_CONFIG: Record<
     badgeVariant: 'error',
     dotColor: '#e11d48',
   },
+  CANCELLED: {
+    label: 'Đã hủy (CANCELLED)',
+    shortLabel: 'CANCELLED',
+    badgeVariant: 'red',
+    dotColor: '#dc2626',
+  },
 };
 
 export const STATUS_TABS = [
@@ -796,6 +827,7 @@ export const STATUS_TABS = [
   { key: 'PARTIALLY_REJECTED', label: 'Từ chối 1 phần' },
   { key: 'REJECTED', label: 'Khách từ chối' },
   { key: 'FAILED', label: 'Thất bại (Failed)' },
+  { key: 'CANCELLED', label: 'Đã hủy (Cancelled)' },
 ] as const;
 
 export interface ProductDepotStock {

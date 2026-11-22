@@ -72,6 +72,12 @@ function normalizePaymentReference(raw: unknown): string | null | undefined {
   return trimmed.length > 0 ? trimmed.slice(0, 120) : null;
 }
 
+function normalizeCancelReason(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed.slice(0, 500) : null;
+}
+
 function defaultPaymentStatusForMethod(method: PaymentMethod): PaymentStatus {
   return method === PaymentMethod.COD ? PaymentStatus.UNPAID : PaymentStatus.PAID;
 }
@@ -738,11 +744,104 @@ export const updateOrderPaymentStatus = async (req: Request, res: Response) => {
   }
 };
 
+export const cancelOrder = async (req: Request, res: Response) => {
+  try {
+    const orderId = Number(req.params.id);
+    if (!Number.isInteger(orderId) || orderId <= 0) {
+      return res.status(400).json({ success: false, message: 'ID đơn hàng không hợp lệ.' });
+    }
+
+    const existingOrder = await prisma.order.findUnique({
+      where: { id: orderId },
+      select: { id: true, orderCode: true, status: true },
+    });
+    if (!existingOrder) {
+      return res.status(404).json({ success: false, message: 'Không tìm thấy đơn hàng.' });
+    }
+    if (existingOrder.status !== OrderStatus.NEW) {
+      return res.status(400).json({
+        success: false,
+        message: `Chỉ có thể hủy đơn hàng ở trạng thái NEW (hiện tại: ${existingOrder.status}).`,
+      });
+    }
+
+    const cancelReason = normalizeCancelReason(req.body?.reason ?? req.body?.cancelReason);
+
+    const updatedOrder = await prisma.$transaction(async (tx) => {
+      const current = await tx.order.findUnique({
+        where: { id: orderId },
+        include: { items: true },
+      });
+      if (!current || current.status !== OrderStatus.NEW) {
+        return null;
+      }
+
+      const claimed = await tx.order.updateMany({
+        where: { id: orderId, status: OrderStatus.NEW },
+        data: {
+          status: OrderStatus.CANCELLED,
+          cancelReason,
+          cancelledAt: new Date(),
+        },
+      });
+      if (claimed.count === 0) {
+        return null;
+      }
+
+      await restoreDepotStock(tx, current.storeId, current.items);
+
+      return tx.order.findUnique({
+        where: { id: orderId },
+        include: ORDER_WITH_RELATIONS_INCLUDE,
+      });
+    });
+
+    if (!updatedOrder) {
+      return res.status(409).json({
+        success: false,
+        message: 'Đơn hàng đã thay đổi trạng thái trước đó, vui lòng tải lại dữ liệu.',
+      });
+    }
+
+    const needsRefundNotice =
+      updatedOrder.paymentMethod !== PaymentMethod.COD &&
+      updatedOrder.paymentStatus === PaymentStatus.PAID;
+
+    const message = needsRefundNotice
+      ? `Đã hủy đơn hàng ${updatedOrder.orderCode} và hoàn tồn kho về depot. Đơn đã thanh toán trước cần hoàn tiền!`
+      : `Đã hủy đơn hàng ${updatedOrder.orderCode} và hoàn tồn kho về depot.`;
+
+    res.json({
+      success: true,
+      message,
+      data: updatedOrder,
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 export const startPicking = async (req: Request, res: Response) => {
   try {
-    const { id } = req.params;
+    const orderId = Number(req.params.id);
+    if (!Number.isInteger(orderId) || orderId <= 0) {
+      return res.status(400).json({ success: false, message: 'ID đơn hàng không hợp lệ.' });
+    }
+    const existing = await prisma.order.findUnique({
+      where: { id: orderId },
+      select: { id: true, status: true },
+    });
+    if (!existing) {
+      return res.status(404).json({ success: false, message: 'Không tìm thấy đơn hàng.' });
+    }
+    if (existing.status !== OrderStatus.NEW) {
+      return res.status(400).json({
+        success: false,
+        message: `Chỉ có thể bắt đầu nhặt hàng cho đơn ở trạng thái NEW (hiện tại: ${existing.status}).`,
+      });
+    }
     const updatedOrder = await prisma.order.update({
-      where: { id: Number(id) },
+      where: { id: orderId },
       data: { status: OrderStatus.PICKING },
       include: { items: true, store: true, trip: true },
     });
@@ -1425,7 +1524,8 @@ type BulkOrderActionType =
   | 'ASSIGN_DRIVER'
   | 'UNASSIGN_DRIVER'
   | 'COMPLETE_DELIVERY'
-  | 'FAIL_DELIVERY';
+  | 'FAIL_DELIVERY'
+  | 'CANCEL_ORDER';
 
 const VALID_BULK_ACTIONS: readonly BulkOrderActionType[] = [
   'START_PICKING',
@@ -1434,6 +1534,7 @@ const VALID_BULK_ACTIONS: readonly BulkOrderActionType[] = [
   'UNASSIGN_DRIVER',
   'COMPLETE_DELIVERY',
   'FAIL_DELIVERY',
+  'CANCEL_ORDER',
 ];
 
 interface BulkSkippedOrder {
@@ -1447,6 +1548,7 @@ export const bulkOrderAction = async (req: Request, res: Response) => {
     const rawAction = req.body?.action;
     const rawOrderIds = req.body?.orderIds;
     const rawDriverId = req.body?.driverId;
+    const cancelReason = normalizeCancelReason(req.body?.reason ?? req.body?.cancelReason);
 
     if (
       typeof rawAction !== 'string' ||
@@ -1655,6 +1757,18 @@ export const bulkOrderAction = async (req: Request, res: Response) => {
             });
           }
           break;
+
+        case 'CANCEL_ORDER':
+          if (order.status === OrderStatus.NEW) {
+            eligibleOrders.push(order);
+          } else {
+            skipped.push({
+              id: order.id,
+              orderCode: order.orderCode,
+              reason: `Trạng thái hiện tại là ${order.status} (chỉ hỗ trợ NEW)`,
+            });
+          }
+          break;
       }
     }
 
@@ -1675,8 +1789,35 @@ export const bulkOrderAction = async (req: Request, res: Response) => {
     const updatedOrders = await prisma.$transaction(async (tx) => {
       if (action === 'START_PICKING') {
         await tx.order.updateMany({
-          where: { id: { in: eligibleIds } },
+          where: { id: { in: eligibleIds }, status: OrderStatus.NEW },
           data: { status: OrderStatus.PICKING },
+        });
+      } else if (action === 'CANCEL_ORDER') {
+        const cancelledAt = new Date();
+        const cancelledIds: number[] = [];
+        for (const order of eligibleOrders) {
+          const claimed = await tx.order.updateMany({
+            where: { id: order.id, status: OrderStatus.NEW },
+            data: {
+              status: OrderStatus.CANCELLED,
+              cancelReason,
+              cancelledAt,
+            },
+          });
+          if (claimed.count === 1) {
+            await restoreDepotStock(tx, order.storeId, order.items);
+            cancelledIds.push(order.id);
+          } else {
+            skipped.push({
+              id: order.id,
+              orderCode: order.orderCode,
+              reason: 'Đơn hàng đã thay đổi trạng thái trước khi hủy',
+            });
+          }
+        }
+        return tx.order.findMany({
+          where: { id: { in: cancelledIds } },
+          include: ORDER_WITH_RELATIONS_INCLUDE,
         });
       } else if (action === 'COMPLETE_PACKING') {
         await tx.order.updateMany({
@@ -1856,6 +1997,20 @@ export const bulkOrderAction = async (req: Request, res: Response) => {
     const skippedSuffix =
       skipped.length > 0 ? ` (bỏ qua ${skipped.length} đơn không đủ điều kiện)` : '';
 
+    const prepaidCancelledCount =
+      action === 'CANCEL_ORDER'
+        ? updatedOrders.filter(
+            (o) =>
+              o.paymentMethod !== PaymentMethod.COD &&
+              o.paymentStatus === PaymentStatus.PAID
+          ).length
+        : 0;
+
+    const prepaidRefundNote =
+      prepaidCancelledCount > 0
+        ? ` (${prepaidCancelledCount} đơn đã thanh toán trước cần hoàn tiền)`
+        : '';
+
     const actionMessageMap: Record<BulkOrderActionType, string> = {
       START_PICKING: `Đã chuyển ${updatedOrders.length} đơn sang Đang nhặt (PICKING)${skippedSuffix}.`,
       COMPLETE_PACKING: `Đã đóng gói xong ${updatedOrders.length} đơn (PACKED)${skippedSuffix}.`,
@@ -1863,6 +2018,7 @@ export const bulkOrderAction = async (req: Request, res: Response) => {
       UNASSIGN_DRIVER: `Đã bỏ gán tài xế cho ${updatedOrders.length} đơn và đưa về trạng thái PACKED${skippedSuffix}.`,
       COMPLETE_DELIVERY: `Đã xác nhận giao thành công ${updatedOrders.length} đơn hàng${skippedSuffix}.`,
       FAIL_DELIVERY: `Đã đánh dấu giao thất bại ${updatedOrders.length} đơn hàng${skippedSuffix}.`,
+      CANCEL_ORDER: `Đã hủy ${updatedOrders.length} đơn hàng và hoàn tồn kho về depot${prepaidRefundNote}${skippedSuffix}.`,
     };
 
     return res.json({

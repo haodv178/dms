@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
+  Ban,
   CheckCircle2,
   Clock,
   Columns3,
@@ -50,6 +51,7 @@ import {
   STATUS_CONFIG,
   STATUS_TABS,
   canRoleAssignDriver,
+  canRoleCancelOrders,
   canRoleEditOrders,
   canRolePickAndPack,
   canRoleUpdateStopDelivery,
@@ -58,8 +60,11 @@ import {
   formatTimeslot,
   formatVND,
   getOrderNetAmount,
+  getOrderRefundAmount,
   getOrderRejectedAmount,
+  isOrderCancellable,
   isOrderEditable,
+  isOrderPrepaid,
   isOrderRefundPending,
   isOrderRejectedStatus,
   toIsoDateString,
@@ -134,6 +139,10 @@ interface PendingBulkConfirmation {
   skippedCount: number;
 }
 
+type PendingCancelTarget =
+  | { mode: 'single'; order: Order }
+  | { mode: 'bulk'; eligibleOrders: Order[]; skippedCount: number };
+
 interface OrderTableProps {
   role: Role;
   filteredOrders: Order[];
@@ -157,9 +166,12 @@ interface OrderTableProps {
   onBatchPreparePacked: () => void;
   onBulkAction: (
     action: BulkOrderActionType,
-    orderIds: number[]
+    orderIds: number[],
+    driverId?: number,
+    reason?: string
   ) => Promise<void>;
   onEditOrder: (order: Order) => void;
+  onCancelOrder: (orderId: number, reason?: string) => Promise<void>;
   onUpdatePaymentStatus: (
     orderId: number,
     paymentStatus: PaymentStatus,
@@ -201,6 +213,7 @@ export function OrderTable({
   onBatchPreparePacked,
   onBulkAction,
   onEditOrder,
+  onCancelOrder,
   onUpdatePaymentStatus,
   onStartPicking,
   onCompletePacking,
@@ -209,6 +222,9 @@ export function OrderTable({
   onOpenRejectDelivery,
 }: OrderTableProps) {
   const [pendingConfirm, setPendingConfirm] = useState<PendingBulkConfirmation | null>(null);
+  const [pendingCancel, setPendingCancel] = useState<PendingCancelTarget | null>(null);
+  const [cancelReasonDraft, setCancelReasonDraft] = useState('');
+  const [cancelSaving, setCancelSaving] = useState(false);
   const [paymentModalOrder, setPaymentModalOrder] = useState<Order | null>(null);
   const [paymentStatusDraft, setPaymentStatusDraft] = useState<PaymentStatus>('UNPAID');
   const [paymentRefDraft, setPaymentRefDraft] = useState('');
@@ -316,11 +332,58 @@ export function OrderTable({
   const canPickPack = canRolePickAndPack(role);
   const canAssign = canRoleAssignDriver(role);
   const canUpdateDelivery = canRoleUpdateStopDelivery(role);
+  const canCancel = canRoleCancelOrders(role);
 
   const hasAnyAvailableBulkAction =
     (canPickPack && (eligibleGroups.pickable.length > 0 || eligibleGroups.packable.length > 0)) ||
+    (canCancel && eligibleGroups.pickable.length > 0) ||
     (canAssign && eligibleGroups.delivering.length > 0) ||
     (canUpdateDelivery && eligibleGroups.delivering.length > 0);
+
+  const openSingleCancelDialog = (order: Order) => {
+    setPendingCancel({ mode: 'single', order });
+    setCancelReasonDraft('');
+  };
+
+  const openBulkCancelDialog = (eligibleOrders: Order[]) => {
+    setPendingCancel({
+      mode: 'bulk',
+      eligibleOrders,
+      skippedCount: selectedVisibleOrders.length - eligibleOrders.length,
+    });
+    setCancelReasonDraft('');
+  };
+
+  const handleConfirmCancel = async () => {
+    if (!pendingCancel) return;
+    setCancelSaving(true);
+    try {
+      const reason = cancelReasonDraft.trim() || undefined;
+      if (pendingCancel.mode === 'single') {
+        await onCancelOrder(pendingCancel.order.id, reason);
+      } else {
+        await onBulkAction(
+          'CANCEL_ORDER',
+          selectedVisibleOrders.map((o) => o.id),
+          undefined,
+          reason
+        );
+      }
+      setPendingCancel(null);
+      setCancelReasonDraft('');
+    } catch {
+      // Error toast is handled by parent
+    } finally {
+      setCancelSaving(false);
+    }
+  };
+
+  const pendingCancelPrepaidOrders = useMemo(() => {
+    if (!pendingCancel) return [];
+    const targetOrders =
+      pendingCancel.mode === 'single' ? [pendingCancel.order] : pendingCancel.eligibleOrders;
+    return targetOrders.filter((o) => isOrderPrepaid(o));
+  }, [pendingCancel]);
 
   const openConfirmDialog = (
     action: ConfirmableBulkAction,
@@ -626,6 +689,17 @@ export function OrderTable({
                         selectedVisibleOrders.map((o) => o.id)
                       )
                     }
+                  />
+                )}
+
+                {canCancel && eligibleGroups.pickable.length > 0 && (
+                  <Button
+                    label={`Hủy đơn (${eligibleGroups.pickable.length})`}
+                    variant="destructive"
+                    size="sm"
+                    icon={<Ban className="w-3.5 h-3.5" />}
+                    isDisabled={bulkLoading}
+                    onClick={() => openBulkCancelDialog(eligibleGroups.pickable)}
                   />
                 )}
 
@@ -997,7 +1071,7 @@ export function OrderTable({
                               </Stack>
                               {isOrderRefundPending(order) && (
                                 <Badge
-                                  label={`Cần hoàn tiền ${formatVND(getOrderRejectedAmount(order))}`}
+                                  label={`Cần hoàn tiền ${formatVND(getOrderRefundAmount(order))}`}
                                   variant="warning"
                                 />
                               )}
@@ -1023,6 +1097,11 @@ export function OrderTable({
                                   {REJECTION_REASON_CONFIG[order.rejectionReason]?.shortLabel ??
                                     order.rejectionReason}
                                   {order.rejectionNote ? ` — ${order.rejectionNote}` : ''}
+                                </Text>
+                              )}
+                              {order.status === 'CANCELLED' && order.cancelReason && (
+                                <Text type="supporting" size="xsm" maxLines={2}>
+                                  Lý do hủy: {order.cancelReason}
                                 </Text>
                               )}
                             </Stack>
@@ -1068,13 +1147,25 @@ export function OrderTable({
                               )}
 
                               {order.status === 'NEW' && (
-                                <Button
-                                  label="Bắt đầu nhặt"
-                                  variant="primary"
-                                  size="sm"
-                                  icon={<ShoppingBag className="w-3.5 h-3.5" />}
-                                  onClick={() => onStartPicking(order.id)}
-                                />
+                                <>
+                                  <Button
+                                    label="Bắt đầu nhặt"
+                                    variant="primary"
+                                    size="sm"
+                                    icon={<ShoppingBag className="w-3.5 h-3.5" />}
+                                    onClick={() => onStartPicking(order.id)}
+                                  />
+                                  {canCancel && isOrderCancellable(order.status) && (
+                                    <IconButton
+                                      label={`Hủy đơn ${order.orderCode}`}
+                                      tooltip="Hủy đơn hàng"
+                                      variant="destructive"
+                                      size="sm"
+                                      icon={<Ban className="w-3.5 h-3.5" />}
+                                      onClick={() => openSingleCancelDialog(order)}
+                                    />
+                                  )}
+                                </>
                               )}
 
                               {order.status === 'PICKING' && (
@@ -1126,7 +1217,8 @@ export function OrderTable({
                               {(order.status === 'COMPLETED' ||
                                 order.status === 'PARTIALLY_REJECTED' ||
                                 order.status === 'REJECTED' ||
-                                order.status === 'FAILED') && (
+                                order.status === 'FAILED' ||
+                                order.status === 'CANCELLED') && (
                                 <Text type="supporting" size="sm">
                                   Đã kết thúc
                                 </Text>
@@ -1161,6 +1253,106 @@ export function OrderTable({
           onAction={handleConfirmPendingAction}
           width={480}
         />
+      )}
+
+      {pendingCancel && (
+        <Dialog
+          isOpen={Boolean(pendingCancel)}
+          onOpenChange={(open) => {
+            if (!open && !cancelSaving) {
+              setPendingCancel(null);
+              setCancelReasonDraft('');
+            }
+          }}
+          width={480}
+        >
+          <Layout
+            header={
+              <DialogHeader
+                title={
+                  pendingCancel.mode === 'single'
+                    ? `Hủy đơn hàng • ${pendingCancel.order.orderCode}`
+                    : `Hủy ${pendingCancel.eligibleOrders.length} đơn hàng NEW?`
+                }
+                subtitle={
+                  pendingCancel.mode === 'single'
+                    ? `${pendingCancel.order.customerName} • ${formatVND(pendingCancel.order.totalAmount)}`
+                    : 'Chỉ các đơn hàng đang ở trạng thái NEW mới được hủy'
+                }
+                onOpenChange={(open) => {
+                  if (!open && !cancelSaving) {
+                    setPendingCancel(null);
+                    setCancelReasonDraft('');
+                  }
+                }}
+              />
+            }
+            content={
+              <LayoutContent>
+                <Stack direction="vertical" gap={3}>
+                  <Text type="body" size="sm">
+                    {pendingCancel.mode === 'single'
+                      ? `Đơn hàng ${pendingCancel.order.orderCode} sẽ chuyển sang trạng thái CANCELLED và toàn bộ tồn kho sản phẩm sẽ được hoàn về depot.`
+                      : `Các đơn sau sẽ chuyển sang CANCELLED và được hoàn tồn kho về depot: ${formatOrderCodesPreview(pendingCancel.eligibleOrders)}.${
+                          pendingCancel.skippedCount > 0
+                            ? ` (${pendingCancel.skippedCount} đơn khác không ở trạng thái NEW sẽ được bỏ qua.)`
+                            : ''
+                        }`}
+                  </Text>
+
+                  {pendingCancelPrepaidOrders.length > 0 && (
+                    <Badge
+                      label={
+                        pendingCancelPrepaidOrders.length === 1
+                          ? `Lưu ý: Đơn đã thanh toán trước (${formatVND(pendingCancelPrepaidOrders[0].totalAmount)}), cần hoàn tiền sau khi hủy.`
+                          : `Lưu ý: Có ${pendingCancelPrepaidOrders.length} đơn đã thanh toán trước cần hoàn tiền sau khi hủy.`
+                      }
+                      variant="warning"
+                    />
+                  )}
+
+                  <TextInput
+                    label="Lý do hủy đơn (tùy chọn)"
+                    width="100%"
+                    size="sm"
+                    value={cancelReasonDraft}
+                    onChange={setCancelReasonDraft}
+                    placeholder="VD: Khách yêu cầu hủy, đặt trùng đơn..."
+                    isDisabled={cancelSaving}
+                  />
+                </Stack>
+              </LayoutContent>
+            }
+            footer={
+              <LayoutFooter>
+                <Stack direction="horizontal" justify="end" gap={2}>
+                  <Button
+                    label="Đóng"
+                    variant="secondary"
+                    size="sm"
+                    isDisabled={cancelSaving}
+                    onClick={() => {
+                      setPendingCancel(null);
+                      setCancelReasonDraft('');
+                    }}
+                  />
+                  <Button
+                    label={
+                      pendingCancel.mode === 'single'
+                        ? 'Xác nhận hủy đơn'
+                        : `Xác nhận hủy (${pendingCancel.eligibleOrders.length})`
+                    }
+                    variant="destructive"
+                    size="sm"
+                    icon={<Ban className="w-3.5 h-3.5" />}
+                    isLoading={cancelSaving}
+                    onClick={() => void handleConfirmCancel()}
+                  />
+                </Stack>
+              </LayoutFooter>
+            }
+          />
+        </Dialog>
       )}
 
       {paymentModalOrder && (

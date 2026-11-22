@@ -183,6 +183,20 @@ export async function startPickingOrder(orderId: number): Promise<void> {
   await httpClient.patch(`/orders/${orderId}/start-picking`);
 }
 
+export async function cancelOrder(
+  orderId: number,
+  reason?: string
+): Promise<{ order: Order; message: string }> {
+  const trimmed = reason?.trim();
+  const res = await httpClient.patch(`/orders/${orderId}/cancel`, {
+    ...(trimmed ? { reason: trimmed } : {}),
+  });
+  return {
+    order: res.data.data as Order,
+    message: (res.data?.message as string) || 'Đã hủy đơn hàng và hoàn tồn kho về depot!',
+  };
+}
+
 export async function completePackingOrder(orderId: number): Promise<void> {
   await httpClient.patch(`/orders/${orderId}/complete-packing`);
 }
@@ -231,12 +245,15 @@ export async function assignDriverToOrder(
 export async function bulkOrderAction(
   action: BulkOrderActionType,
   orderIds: number[],
-  driverId?: number
+  driverId?: number,
+  reason?: string
 ): Promise<BulkOrderActionResult> {
+  const trimmedReason = reason?.trim();
   const res = await httpClient.post('/orders/bulk-action', {
     action,
     orderIds,
     ...(driverId !== undefined ? { driverId } : {}),
+    ...(trimmedReason ? { reason: trimmedReason } : {}),
   });
   return {
     updatedCount: Number(res.data?.data?.updatedCount ?? 0),
