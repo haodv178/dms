@@ -1,0 +1,128 @@
+name: Deploy DMS Frontend to Azure
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/deploy-frontend-azure.yml'
+  workflow_dispatch:
+    inputs:
+      api_base_url:
+        description: 'Optional VITE_API_BASE_URL override (defaults to https://<dms-backend-fqdn>/api)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP || 'rg-dms-backend' }}
+  BACKEND_APP_NAME: dms-backend
+  FRONTEND_APP_NAME: dms-frontend
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Resolve Backend URL and Static Web App Token
+        id: azure
+        env:
+          API_BASE_URL_OVERRIDE: ${{ inputs.api_base_url }}
+        run: |
+          if ! FRONTEND_HOST=$(az staticwebapp show \
+            --name "${FRONTEND_APP_NAME}" \
+            --resource-group "${AZURE_RESOURCE_GROUP}" \
+            --query defaultHostname -o tsv 2>/dev/null) || [ -z "$FRONTEND_HOST" ]; then
+            echo "::error::Static Web App '${FRONTEND_APP_NAME}' not found in resource group '${AZURE_RESOURCE_GROUP}'. Run 'Deploy DMS Backend to Azure' first so infra/main.bicep provisions it."
+            exit 1
+          fi
+
+          if [ -n "$API_BASE_URL_OVERRIDE" ]; then
+            API_BASE_URL="$API_BASE_URL_OVERRIDE"
+          else
+            BACKEND_FQDN=$(az containerapp show \
+              --name "${BACKEND_APP_NAME}" \
+              --resource-group "${AZURE_RESOURCE_GROUP}" \
+              --query properties.configuration.ingress.fqdn -o tsv)
+            if [ -z "$BACKEND_FQDN" ]; then
+              echo "::error::Container App '${BACKEND_APP_NAME}' not found in resource group '${AZURE_RESOURCE_GROUP}'."
+              exit 1
+            fi
+            API_BASE_URL="https://${BACKEND_FQDN}/api"
+          fi
+
+          SWA_TOKEN=$(az staticwebapp secrets list \
+            --name "${FRONTEND_APP_NAME}" \
+            --resource-group "${AZURE_RESOURCE_GROUP}" \
+            --query properties.apiKey -o tsv)
+          if [ -z "$SWA_TOKEN" ]; then
+            echo "::error::Failed to retrieve deployment token for '${FRONTEND_APP_NAME}'."
+            exit 1
+          fi
+
+          echo "::add-mask::${SWA_TOKEN}"
+          echo "frontend_url=https://${FRONTEND_HOST}" >> "$GITHUB_OUTPUT"
+          echo "api_base_url=${API_BASE_URL}" >> "$GITHUB_OUTPUT"
+          echo "swa_token=${SWA_TOKEN}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: frontend
+        env:
+          VITE_API_BASE_URL: ${{ steps.azure.outputs.api_base_url }}
+        run: npm run build
+
+      - name: Deploy to Azure Static Web Apps
+        env:
+          SWA_CLI_DEPLOYMENT_TOKEN: ${{ steps.azure.outputs.swa_token }}
+        run: |
+          npx --yes @azure/static-web-apps-cli@2 deploy ./frontend/dist \
+            --env production \
+            --deployment-token "$SWA_CLI_DEPLOYMENT_TOKEN"
+
+      - name: Smoke test frontend
+        run: |
+          FRONTEND_URL="${{ steps.azure.outputs.frontend_url }}"
+          echo "Checking ${FRONTEND_URL} ..."
+          for i in $(seq 1 6); do
+            if curl -fsS -o /dev/null "${FRONTEND_URL}/"; then
+              echo "Frontend is reachable!"
+              exit 0
+            fi
+            echo "Attempt $i failed (CDN propagation); retrying in 10s..."
+            sleep 10
+          done
+          echo "Frontend health check did not pass within timeout."
+          exit 1
+
+      - name: Write deployment summary
+        run: |
+          {
+            echo "### Azure Frontend Deployment Summary"
+            echo "- **Frontend URL**: ${{ steps.azure.outputs.frontend_url }}"
+            echo "- **API Base URL**: \`${{ steps.azure.outputs.api_base_url }}\`"
+            echo "- **Static Web App**: \`${FRONTEND_APP_NAME}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -26,8 +26,18 @@ param postgresDbName string = 'dms_db'
 @secure()
 param jwtSecret string
 
-@description('Comma-separated list of allowed frontend origins for CORS (e.g. https://your-app.vercel.app,http://localhost:5173).')
+@description('Comma-separated list of additional allowed frontend origins for CORS (the deployed Azure Static Web App URL is added automatically).')
 param frontendOrigin string = 'http://localhost:5173'
+
+@description('Azure region for Static Web Apps control plane (allowed: eastasia, westus2, centralus, eastus2, westeurope).')
+@allowed([
+  'eastasia'
+  'westus2'
+  'centralus'
+  'eastus2'
+  'westeurope'
+])
+param staticWebAppLocation string = 'eastasia'
 
 var suffix = uniqueString(resourceGroup().id)
 var logAnalyticsName = toLower('${appName}-logs-${suffix}')
@@ -35,6 +45,7 @@ var containerAppEnvName = toLower('${appName}-env-${suffix}')
 var postgresServerName = toLower('${appName}-pg-${suffix}')
 var solverAppName = toLower('${appName}-solver')
 var backendAppName = toLower('${appName}-backend')
+var frontendAppName = toLower('${appName}-frontend')
 
 resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   name: logAnalyticsName
@@ -166,6 +177,21 @@ resource solverApp 'Microsoft.App/containerApps@2024-03-01' = {
   }
 }
 
+resource frontendApp 'Microsoft.Web/staticSites@2023-12-01' = {
+  name: frontendAppName
+  location: staticWebAppLocation
+  sku: {
+    name: 'Free'
+    tier: 'Free'
+  }
+  properties: {
+    stagingEnvironmentPolicy: 'Disabled'
+    allowConfigFileUpdates: true
+  }
+}
+
+var frontendUrl = 'https://${frontendApp.properties.defaultHostname}'
+var effectiveFrontendOrigin = empty(trim(frontendOrigin)) ? frontendUrl : '${frontendUrl},${frontendOrigin}'
 var databaseUrl = 'postgresql://${postgresAdminLogin}:${uriComponent(postgresAdminPassword)}@${postgresServer.properties.fullyQualifiedDomainName}:5432/${postgresDbName}?schema=public&sslmode=require'
 
 resource backendApp 'Microsoft.App/containerApps@2024-03-01' = {
@@ -223,7 +249,7 @@ resource backendApp 'Microsoft.App/containerApps@2024-03-01' = {
             }
             {
               name: 'FRONTEND_ORIGIN'
-              value: frontendOrigin
+              value: effectiveFrontendOrigin
             }
           ]
           resources: {
@@ -274,3 +300,5 @@ resource backendApp 'Microsoft.App/containerApps@2024-03-01' = {
 output backendUrl string = 'https://${backendApp.properties.configuration.ingress.fqdn}'
 output solverInternalUrl string = 'https://${solverApp.properties.configuration.ingress.fqdn}'
 output postgresHost string = postgresServer.properties.fullyQualifiedDomainName
+output frontendUrl string = frontendUrl
+output frontendAppName string = frontendApp.name

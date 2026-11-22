@@ -1,11 +1,15 @@
-# Deploying DMS Backend to Azure
+# Deploying DMS (Backend + Frontend) to Azure
 
-This setup deploys the full DMS backend stack to **Azure Container Apps (Consumption, scale-to-zero)** + **Azure Database for PostgreSQL Flexible Server (Burstable `Standard_B1ms`)** using **Bicep** and **GitHub Actions** with **OIDC Federated Credentials** and **GitHub Container Registry (`ghcr.io`)**.
+This setup deploys the full DMS stack to Azure using **Bicep** and **GitHub Actions** with **OIDC Federated Credentials**:
+- **Backend & Solver**: **Azure Container Apps (Consumption, scale-to-zero)** + **GitHub Container Registry (`ghcr.io`)**
+- **Database**: **Azure Database for PostgreSQL Flexible Server (Burstable `Standard_B1ms`)**
+- **Frontend**: **Azure Static Web Apps (Free tier, global CDN, automatic HTTPS)**
 
 ## Architecture
 
+- **`dms-frontend`** (Azure Static Web App, Free tier, control plane in `eastasia`, global CDN HTTPS; URL is automatically added to backend CORS)
 - **`dms-backend`** (Azure Container App, external HTTPS ingress on port `3000`)
-- **`dms-solver`** (`python-solver`, Azure Container App, internal-only HTTP ingress on port `8090`, reached by backend at `http://dms-solver`)
+- **`dms-solver`** (`python-solver`, Azure Container App, internal-only HTTP ingress on port `8090`)
 - **`dms-pg-<hash>`** (Azure Database for PostgreSQL Flexible Server v15, `Standard_B1ms`, SSL required)
 - **Container Images**: `ghcr.io/haodv178/dms-backend` and `ghcr.io/haodv178/dms-python-solver` (public GHCR packages)
 
@@ -61,6 +65,7 @@ echo "AZURE_SUBSCRIPTION_ID=$SUBSCRIPTION_ID"
 az provider register --namespace Microsoft.App --wait
 az provider register --namespace Microsoft.OperationalInsights --wait
 az provider register --namespace Microsoft.DBforPostgreSQL --wait
+az provider register --namespace Microsoft.Web --wait
 ```
 
 ---
@@ -85,7 +90,7 @@ In your GitHub repo (`haodv178/dms`), go to **Settings → Secrets and variables
 | --- | --- | --- |
 | `AZURE_RESOURCE_GROUP` | `rg-dms-backend` | Target Azure Resource Group |
 | `AZURE_LOCATION` | `southeastasia` | Azure region (`eastasia`, `japaneast`, `eastus`, etc.) |
-| `FRONTEND_ORIGIN` | `http://localhost:5173` | Comma-separated allowed CORS origins (set to your deployed frontend URL, e.g. `https://dms-web.vercel.app`) |
+| `FRONTEND_ORIGIN` | `http://localhost:5173` | Additional comma-separated allowed CORS origins (the `dms-frontend` Azure Static Web App URL is added automatically by Bicep) |
 
 ---
 
@@ -101,11 +106,19 @@ In your GitHub repo (`haodv178/dms`), go to **Settings → Secrets and variables
 
 ---
 
-## 6. Connect Your Frontend
+## 6. Deploy the Frontend (Azure Static Web Apps)
 
-In your frontend host (Azure Static Web Apps, Vercel, Netlify, etc.):
-1. Set `VITE_API_BASE_URL` to `https://<your-backend-fqdn>/api`.
-2. Add your deployed frontend URL to the `FRONTEND_ORIGIN` GitHub Repository Variable (e.g., `https://your-frontend.vercel.app,http://localhost:5173`) and re-run the workflow so CORS updates on the backend.
+No additional GitHub Secrets or Variables are needed — the frontend workflow reuses your existing Azure OIDC credentials.
+
+1. **First-time order**: Ensure **Deploy DMS Backend to Azure** has run at least once after adding `dms-frontend` to `infra/main.bicep` (this provisions the Static Web App and automatically adds its `https://*.azurestaticapps.net` URL to backend CORS).
+2. Run **Actions → Deploy DMS Frontend to Azure → Run workflow** (or push any change under `frontend/**` to `main`).
+3. The workflow automatically:
+   - Looks up `dms-backend`'s FQDN and builds `frontend/` with `VITE_API_BASE_URL=https://<backend-fqdn>/api`.
+   - Fetches the `dms-frontend` deployment token via Azure OIDC.
+   - Uploads `frontend/dist` (including `staticwebapp.config.json`) to Azure Static Web Apps.
+4. Open the **Frontend URL** printed in the workflow's **Run Summary**.
+
+> **Note on cross-origin refresh cookies**: Because `*.azurestaticapps.net` and `*.azurecontainerapps.io` are different domains, the backend issues `SameSite=None; Secure; HttpOnly` refresh cookies in production. This works in Chrome/Edge, though browsers with strict third-party cookie blocking (e.g., Safari ITP or Brave Shields) may require logging in again after a full page reload.
 
 ---
 

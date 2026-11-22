@@ -127,8 +127,10 @@ jobs:
             --output json)
 
           BACKEND_URL=$(echo "$OUTPUTS" | jq -r '.backendUrl.value')
+          FRONTEND_URL=$(echo "$OUTPUTS" | jq -r '.frontendUrl.value')
           POSTGRES_HOST=$(echo "$OUTPUTS" | jq -r '.postgresHost.value')
           echo "backend_url=${BACKEND_URL}" >> "$GITHUB_OUTPUT"
+          echo "frontend_url=${FRONTEND_URL}" >> "$GITHUB_OUTPUT"
           echo "postgres_host=${POSTGRES_HOST}" >> "$GITHUB_OUTPUT"
 
       - name: Smoke test backend health endpoint
@@ -150,9 +152,10 @@ jobs:
       - name: Write deployment summary
         run: |
           {
-            echo "### Azure Backend Deployment Summary"
+            echo "### Azure Backend & Infra Deployment Summary"
             echo "- **Backend URL**: ${{ steps.deploy.outputs.backend_url }}"
             echo "- **Health Check**: ${{ steps.deploy.outputs.backend_url }}/api/health"
+            echo "- **Frontend URL (SWA)**: ${{ steps.deploy.outputs.frontend_url }}"
             echo "- **PostgreSQL Host**: \`${{ steps.deploy.outputs.postgres_host }}\`"
             echo "- **Backend Image**: \`${{ needs.build-and-push.outputs.backend_image }}\`"
             echo "- **Solver Image**: \`${{ needs.build-and-push.outputs.solver_image }}\`"

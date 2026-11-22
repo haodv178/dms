@@ -1,6 +1,7 @@
 using './main.bicep'
 
 param location = 'southeastasia'
+param staticWebAppLocation = 'eastasia'
 param appName = 'dms'
 param backendImage = 'ghcr.io/haodv178/dms-backend:latest'
 param solverImage = 'ghcr.io/haodv178/dms-python-solver:latest'
