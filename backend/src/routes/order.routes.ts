@@ -10,6 +10,7 @@ import {
   completePacking,
   completeDelivery,
   failDelivery,
+  rejectDelivery,
   assignDriverToOrder,
   bulkOrderAction,
 } from '../controllers/order.controller';
@@ -29,6 +30,7 @@ router.patch('/:id/start-picking', requireRole(Role.ADMIN, Role.WAREHOUSE), star
 router.patch('/:id/complete-packing', requireRole(Role.ADMIN, Role.WAREHOUSE), completePacking);
 router.patch('/:id/complete-delivery', requireRole(Role.ADMIN, Role.DRIVER), completeDelivery);
 router.patch('/:id/fail-delivery', requireRole(Role.ADMIN, Role.DRIVER), failDelivery);
+router.patch('/:id/reject-delivery', requireRole(Role.ADMIN, Role.DRIVER), rejectDelivery);
 router.patch('/:id/assign-driver', requireRole(Role.ADMIN), assignDriverToOrder);
 
 export default router;

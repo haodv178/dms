@@ -8,7 +8,18 @@ export type OrderStatus =
   | 'PACKED'
   | 'DELIVERING'
   | 'COMPLETED'
+  | 'PARTIALLY_REJECTED'
+  | 'REJECTED'
   | 'FAILED';
+
+export type RejectionReason =
+  | 'NOT_AS_DESCRIBED'
+  | 'WRONG_SIZE_OR_VARIANT'
+  | 'DAMAGED_OR_EXPIRED'
+  | 'WRONG_OR_MISSING_ITEM'
+  | 'LATE_DELIVERY'
+  | 'CUSTOMER_CHANGED_MIND'
+  | 'OTHER';
 
 export type PaymentMethod =
   | 'COD'
@@ -44,6 +55,7 @@ export interface OrderItem {
   sku?: string | null;
   productName: string;
   quantity: number;
+  rejectedQuantity?: number;
   price: string | number;
 }
 
@@ -282,6 +294,10 @@ export interface Order {
   paidAt?: string | null;
   paymentReference?: string | null;
   status: OrderStatus;
+  rejectionReason?: RejectionReason | null;
+  rejectionNote?: string | null;
+  rejectedAt?: string | null;
+  rejectedAmount?: string | number;
   items: OrderItem[];
   tripId: number | null;
   trip?: Trip | null;
@@ -552,11 +568,50 @@ export function defaultPaymentStatusForMethod(method: PaymentMethod): PaymentSta
   return method === 'COD' ? 'UNPAID' : 'PAID';
 }
 
-export function getOrderCodAmount(order: Pick<Order, 'totalAmount' | 'paymentMethod' | 'paymentStatus'>): number {
+export function getOrderRejectedAmount(
+  order: Pick<Order, 'rejectedAmount'>
+): number {
+  const amount = Number(order.rejectedAmount ?? 0);
+  return Number.isFinite(amount) && amount > 0 ? amount : 0;
+}
+
+export function getOrderNetAmount(
+  order: Pick<Order, 'totalAmount' | 'rejectedAmount'>
+): number {
+  const total = Number(order.totalAmount) || 0;
+  const rejected = getOrderRejectedAmount(order);
+  return Math.max(0, total - rejected);
+}
+
+export function isOrderRejectedStatus(status: OrderStatus): boolean {
+  return status === 'REJECTED' || status === 'PARTIALLY_REJECTED';
+}
+
+export function isOrderRefundPending(
+  order: Pick<Order, 'status' | 'paymentMethod' | 'paymentStatus' | 'rejectedAmount'>
+): boolean {
+  return (
+    isOrderRejectedStatus(order.status) &&
+    order.paymentMethod !== 'COD' &&
+    order.paymentStatus === 'PAID' &&
+    getOrderRejectedAmount(order) > 0
+  );
+}
+
+export function getOrderCodAmount(
+  order: Pick<Order, 'totalAmount' | 'paymentMethod' | 'paymentStatus'> &
+    Partial<Pick<Order, 'status' | 'rejectedAmount'>>
+): number {
+  if (order.status === 'REJECTED') {
+    return 0;
+  }
   const method = order.paymentMethod ?? 'COD';
   const status = order.paymentStatus ?? 'UNPAID';
   if (method === 'COD' && status === 'UNPAID') {
-    return Number(order.totalAmount) || 0;
+    return getOrderNetAmount({
+      totalAmount: order.totalAmount,
+      rejectedAmount: order.rejectedAmount,
+    });
   }
   return 0;
 }
@@ -624,6 +679,50 @@ export const ROLE_META: Record<
   },
 };
 
+export const REJECTION_REASONS: readonly RejectionReason[] = [
+  'NOT_AS_DESCRIBED',
+  'WRONG_SIZE_OR_VARIANT',
+  'DAMAGED_OR_EXPIRED',
+  'WRONG_OR_MISSING_ITEM',
+  'LATE_DELIVERY',
+  'CUSTOMER_CHANGED_MIND',
+  'OTHER',
+] as const;
+
+export const REJECTION_REASON_CONFIG: Record<
+  RejectionReason,
+  { label: string; shortLabel: string }
+> = {
+  NOT_AS_DESCRIBED: {
+    label: 'Hàng không giống mô tả / hình ảnh',
+    shortLabel: 'Không giống mô tả',
+  },
+  WRONG_SIZE_OR_VARIANT: {
+    label: 'Sai kích thước / phân loại / quy cách',
+    shortLabel: 'Sai kích thước',
+  },
+  DAMAGED_OR_EXPIRED: {
+    label: 'Hàng bị hỏng / móp méo / quá hạn',
+    shortLabel: 'Hàng hỏng / quá hạn',
+  },
+  WRONG_OR_MISSING_ITEM: {
+    label: 'Giao sai sản phẩm / thiếu hàng',
+    shortLabel: 'Sai / thiếu hàng',
+  },
+  LATE_DELIVERY: {
+    label: 'Giao trễ khung giờ hẹn',
+    shortLabel: 'Giao trễ giờ',
+  },
+  CUSTOMER_CHANGED_MIND: {
+    label: 'Khách đổi ý không muốn nhận',
+    shortLabel: 'Khách đổi ý',
+  },
+  OTHER: {
+    label: 'Lý do khác',
+    shortLabel: 'Lý do khác',
+  },
+};
+
 export const STATUS_CONFIG: Record<
   OrderStatus,
   { label: string; shortLabel: string; badgeVariant: StatusBadgeVariant; dotColor: string }
@@ -658,6 +757,18 @@ export const STATUS_CONFIG: Record<
     badgeVariant: 'green',
     dotColor: '#059669',
   },
+  PARTIALLY_REJECTED: {
+    label: 'Từ chối một phần (PARTIAL)',
+    shortLabel: 'TỪ CHỐI 1 PHẦN',
+    badgeVariant: 'warning',
+    dotColor: '#ea580c',
+  },
+  REJECTED: {
+    label: 'Khách từ chối (REJECTED)',
+    shortLabel: 'TỪ CHỐI',
+    badgeVariant: 'pink',
+    dotColor: '#be185d',
+  },
   FAILED: {
     label: 'Giao thất bại (FAILED)',
     shortLabel: 'FAILED',
@@ -673,6 +784,8 @@ export const STATUS_TABS = [
   { key: 'PACKED', label: 'Đã đóng gói (Packed)' },
   { key: 'DELIVERING', label: 'Đang giao (Delivering)' },
   { key: 'COMPLETED', label: 'Hoàn thành (Completed)' },
+  { key: 'PARTIALLY_REJECTED', label: 'Từ chối 1 phần' },
+  { key: 'REJECTED', label: 'Khách từ chối' },
   { key: 'FAILED', label: 'Thất bại (Failed)' },
 ] as const;
 

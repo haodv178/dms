@@ -22,6 +22,7 @@ import {
   type ProductFormState,
   type ProductPagination,
   type ProductSummary,
+  type RejectionReason,
   type Store,
   type StoreFormState,
   type StoreInventoryItem,
@@ -192,6 +193,26 @@ export async function completeDeliveryOrder(orderId: number): Promise<void> {
 
 export async function failDeliveryOrder(orderId: number): Promise<void> {
   await httpClient.patch(`/orders/${orderId}/fail-delivery`);
+}
+
+export interface RejectDeliveryPayload {
+  reason: RejectionReason;
+  note?: string;
+  rejectedItems: Array<{
+    orderItemId: number;
+    rejectedQuantity: number;
+  }>;
+}
+
+export async function rejectDeliveryOrder(
+  orderId: number,
+  payload: RejectDeliveryPayload
+): Promise<{ order: Order; message: string }> {
+  const res = await httpClient.patch(`/orders/${orderId}/reject-delivery`, payload);
+  return {
+    order: res.data.data as Order,
+    message: (res.data?.message as string) || 'Đã ghi nhận khách hàng từ chối nhận hàng!',
+  };
 }
 
 export async function assignDriverToOrder(

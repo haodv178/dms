@@ -27,6 +27,7 @@ import {
   getErrorMessage,
   optimizeTripRoute,
   reassignTripDriver,
+  rejectDeliveryOrder,
   reoptimizeTrip,
   resetUserPassword,
   setDefaultStore,
@@ -38,6 +39,7 @@ import {
   updateProduct,
   updateStore,
   updateUser,
+  type RejectDeliveryPayload,
 } from './api/dmsApi';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { AssignDriverModal } from './components/AssignDriverModal';
@@ -54,6 +56,7 @@ import { OrderFormModal } from './components/OrderFormModal';
 import { OrderTable } from './components/OrderTable';
 import { ProductFormModal } from './components/ProductFormModal';
 import { ProductManagementPage } from './components/ProductManagementPage';
+import { RejectDeliveryModal } from './components/RejectDeliveryModal';
 import { TripManagementPage } from './components/TripManagementPage';
 import { UserFormModal } from './components/UserFormModal';
 import { UserManagementPage } from './components/UserManagementPage';
@@ -146,6 +149,8 @@ function DmsDashboard({
 
   const [activePage, setActivePage] = useState<ActivePage>(() => readInitialPage(user.role));
   const [showChangePasswordModal, setShowChangePasswordModal] = useState<boolean>(false);
+  const [rejectingOrder, setRejectingOrder] = useState<Order | null>(null);
+  const [savingRejection, setSavingRejection] = useState<boolean>(false);
 
   const [users, setUsers] = useState<ManagedUser[]>([]);
   const [userPagination, setUserPagination] = useState<UserPagination>({
@@ -648,6 +653,27 @@ function DmsDashboard({
     }
   };
 
+  const handleOpenRejectDelivery = (order: Order) => {
+    setRejectingOrder(order);
+  };
+
+  const handleConfirmRejectDelivery = async (
+    orderId: number,
+    payload: RejectDeliveryPayload
+  ) => {
+    setSavingRejection(true);
+    try {
+      const { message } = await rejectDeliveryOrder(orderId, payload);
+      notify(message, 'info');
+      setRejectingOrder(null);
+      await Promise.all([loadAllData(), loadDriversPage(), loadProductsPage(), loadStoresPage()]);
+    } catch (err) {
+      notify(getErrorMessage(err), 'error');
+    } finally {
+      setSavingRejection(false);
+    }
+  };
+
   const handleOpenAssignDriver = (order: Order) => {
     setAssigningOrder(order);
     void loadAvailableDrivers();
@@ -985,6 +1011,8 @@ function DmsDashboard({
       PACKED: 0,
       DELIVERING: 0,
       COMPLETED: 0,
+      PARTIALLY_REJECTED: 0,
+      REJECTED: 0,
       FAILED: 0,
     };
     for (const o of orders) {
@@ -1491,6 +1519,7 @@ function DmsDashboard({
             onCompletePacking={handleCompletePacking}
             onCompleteDelivery={handleCompleteDelivery}
             onFailDelivery={handleFailDelivery}
+            onOpenRejectDelivery={handleOpenRejectDelivery}
           />
         </main>
       ) : activePage === 'trips' ? (
@@ -1512,6 +1541,7 @@ function DmsDashboard({
             onCancelTrip={handleCancelTrip}
             onCompleteDelivery={handleCompleteDelivery}
             onFailDelivery={handleFailDelivery}
+            onOpenRejectDelivery={handleOpenRejectDelivery}
           />
         </main>
       ) : activePage === 'products' ? (
@@ -1679,6 +1709,18 @@ function DmsDashboard({
         submitting={savingAssignment}
         onAssign={handleAssignDriver}
         onUnassign={handleUnassignDriver}
+      />
+
+      <RejectDeliveryModal
+        isOpen={Boolean(rejectingOrder)}
+        onOpenChange={(open) => {
+          if (!open && !savingRejection) {
+            setRejectingOrder(null);
+          }
+        }}
+        order={rejectingOrder}
+        submitting={savingRejection}
+        onConfirm={handleConfirmRejectDelivery}
       />
 
       <BulkAssignDriverModal

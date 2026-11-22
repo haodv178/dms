@@ -5,6 +5,7 @@ import {
   PaymentMethod,
   PaymentStatus,
   Prisma,
+  RejectionReason,
   Role,
 } from '@prisma/client';
 import prisma from '../lib/prisma';
@@ -22,6 +23,20 @@ import {
 
 const VALID_PAYMENT_METHODS = new Set<string>(Object.values(PaymentMethod));
 const VALID_PAYMENT_STATUSES = new Set<string>(Object.values(PaymentStatus));
+const VALID_REJECTION_REASONS = new Set<string>(Object.values(RejectionReason));
+
+function parseRejectionReason(raw: unknown): { value?: RejectionReason; error?: string } {
+  if (raw === undefined || raw === null || raw === '') {
+    return { error: 'Vui lòng chọn lý do khách hàng từ chối nhận hàng.' };
+  }
+  const normalized = String(raw).trim().toUpperCase();
+  if (!VALID_REJECTION_REASONS.has(normalized)) {
+    return {
+      error: `Lý do từ chối không hợp lệ: "${raw}". Hỗ trợ: ${Array.from(VALID_REJECTION_REASONS).join(', ')}.`,
+    };
+  }
+  return { value: normalized as RejectionReason };
+}
 
 function parsePaymentMethod(raw: unknown): { value?: PaymentMethod; error?: string } {
   if (raw === undefined || raw === null || raw === '') {
@@ -805,6 +820,12 @@ export const completeDelivery = async (req: Request, res: Response) => {
         message: 'Bạn chỉ có thể xác nhận giao hàng cho đơn thuộc chuyến của mình.',
       });
     }
+    if (existing.status !== OrderStatus.DELIVERING) {
+      return res.status(400).json({
+        success: false,
+        message: `Chỉ có thể xác nhận giao thành công cho đơn ở trạng thái DELIVERING (hiện tại: ${existing.status}).`,
+      });
+    }
 
     const shouldMarkCodPaid =
       existing.paymentMethod === PaymentMethod.COD &&
@@ -858,6 +879,12 @@ export const failDelivery = async (req: Request, res: Response) => {
         message: 'Bạn chỉ có thể báo giao thất bại cho đơn thuộc chuyến của mình.',
       });
     }
+    if (existingOrderCheck.status !== OrderStatus.DELIVERING) {
+      return res.status(400).json({
+        success: false,
+        message: `Chỉ có thể đánh dấu giao thất bại cho đơn ở trạng thái DELIVERING (hiện tại: ${existingOrderCheck.status}).`,
+      });
+    }
 
     const updatedOrder = await prisma.$transaction(async (tx) => {
       const existing = await tx.order.findUnique({
@@ -889,6 +916,214 @@ export const failDelivery = async (req: Request, res: Response) => {
     res.json({
       success: true,
       message: 'Đã ghi nhận giao hàng thất bại và hoàn tồn kho về depot!',
+      data: updatedOrder,
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const rejectDelivery = async (req: Request, res: Response) => {
+  try {
+    const orderId = Number(req.params.id);
+    if (!Number.isInteger(orderId) || orderId <= 0) {
+      return res.status(400).json({ success: false, message: 'ID đơn hàng không hợp lệ.' });
+    }
+
+    const existingOrder = await prisma.order.findUnique({
+      where: { id: orderId },
+      include: { items: true, trip: true },
+    });
+    if (!existingOrder) {
+      return res.status(404).json({ success: false, message: 'Không tìm thấy đơn hàng.' });
+    }
+    if (req.user?.role === Role.DRIVER && existingOrder.trip?.driverId !== req.user.id) {
+      return res.status(403).json({
+        success: false,
+        message: 'Bạn chỉ có thể ghi nhận khách từ chối cho đơn thuộc chuyến của mình.',
+      });
+    }
+    if (existingOrder.status !== OrderStatus.DELIVERING) {
+      return res.status(400).json({
+        success: false,
+        message: `Chỉ có thể ghi nhận khách từ chối cho đơn đang ở trạng thái DELIVERING (hiện tại: ${existingOrder.status}).`,
+      });
+    }
+
+    const { reason, note, rejectAll, rejectedItems } = req.body ?? {};
+
+    const parsedReason = parseRejectionReason(reason);
+    if (parsedReason.error || !parsedReason.value) {
+      return res.status(400).json({
+        success: false,
+        message: parsedReason.error || 'Vui lòng chọn lý do từ chối nhận hàng.',
+      });
+    }
+    const resolvedReason = parsedReason.value;
+
+    const trimmedNote = typeof note === 'string' ? note.trim().slice(0, 500) : '';
+    if (resolvedReason === RejectionReason.OTHER && trimmedNote.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Vui lòng nhập ghi chú chi tiết khi chọn lý do "Khác".',
+      });
+    }
+
+    if (existingOrder.items.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Đơn hàng không có sản phẩm nào để ghi nhận từ chối.',
+      });
+    }
+
+    const itemsById = new Map(existingOrder.items.map((item) => [item.id, item]));
+    const rejectedQtyByItemId = new Map<number, number>();
+
+    if (rejectAll === true && rejectedItems === undefined) {
+      for (const item of existingOrder.items) {
+        rejectedQtyByItemId.set(item.id, item.quantity);
+      }
+    } else {
+      if (!Array.isArray(rejectedItems) || rejectedItems.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Vui lòng chọn ít nhất 1 sản phẩm bị từ chối nhận.',
+        });
+      }
+
+      for (const entry of rejectedItems) {
+        const rawItemId = Number((entry as Record<string, unknown>)?.orderItemId);
+        const rawQty = Number((entry as Record<string, unknown>)?.rejectedQuantity);
+
+        if (!Number.isInteger(rawItemId) || !itemsById.has(rawItemId)) {
+          return res.status(400).json({
+            success: false,
+            message: `Sản phẩm #${rawItemId} không thuộc đơn hàng ${existingOrder.orderCode}.`,
+          });
+        }
+        if (rejectedQtyByItemId.has(rawItemId)) {
+          return res.status(400).json({
+            success: false,
+            message: 'Danh sách sản phẩm từ chối bị trùng lặp.',
+          });
+        }
+        const targetItem = itemsById.get(rawItemId)!;
+        if (!Number.isInteger(rawQty) || rawQty < 0 || rawQty > targetItem.quantity) {
+          return res.status(400).json({
+            success: false,
+            message: `Số lượng từ chối của "${targetItem.productName}" phải từ 0 đến ${targetItem.quantity}.`,
+          });
+        }
+        rejectedQtyByItemId.set(rawItemId, rawQty);
+      }
+    }
+
+    let totalRejectedUnits = 0;
+    let totalOrderedUnits = 0;
+    let rawRejectedAmount = 0;
+    const stockToRestore: Array<{
+      productId: number | null;
+      productName: string;
+      quantity: number;
+    }> = [];
+
+    for (const item of existingOrder.items) {
+      const rejQty = rejectedQtyByItemId.get(item.id) ?? 0;
+      totalOrderedUnits += item.quantity;
+      totalRejectedUnits += rejQty;
+      if (rejQty > 0) {
+        rawRejectedAmount += Number(item.price) * rejQty;
+        stockToRestore.push({
+          productId: item.productId,
+          productName: item.productName,
+          quantity: rejQty,
+        });
+      }
+    }
+
+    if (totalRejectedUnits <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Tổng số lượng sản phẩm từ chối phải lớn hơn 0.',
+      });
+    }
+
+    const isFullRejection = totalRejectedUnits === totalOrderedUnits;
+    const nextStatus = isFullRejection
+      ? OrderStatus.REJECTED
+      : OrderStatus.PARTIALLY_REJECTED;
+    const rejectedAmount = Math.round(rawRejectedAmount * 100) / 100;
+
+    const shouldMarkPartialCodPaid =
+      nextStatus === OrderStatus.PARTIALLY_REJECTED &&
+      existingOrder.paymentMethod === PaymentMethod.COD &&
+      existingOrder.paymentStatus === PaymentStatus.UNPAID;
+
+    const updatedOrder = await prisma.$transaction(async (tx) => {
+      const current = await tx.order.findUnique({
+        where: { id: orderId },
+        include: { items: true },
+      });
+      if (!current || current.status !== OrderStatus.DELIVERING) {
+        return null;
+      }
+
+      for (const item of current.items) {
+        const rejQty = rejectedQtyByItemId.get(item.id) ?? 0;
+        await tx.orderItem.update({
+          where: { id: item.id },
+          data: { rejectedQuantity: rejQty },
+        });
+      }
+
+      await restoreDepotStock(tx, current.storeId, stockToRestore);
+
+      const order = await tx.order.update({
+        where: { id: orderId },
+        data: {
+          status: nextStatus,
+          rejectionReason: resolvedReason,
+          rejectionNote: trimmedNote || null,
+          rejectedAt: new Date(),
+          rejectedAmount,
+          ...(shouldMarkPartialCodPaid
+            ? {
+                paymentStatus: PaymentStatus.PAID,
+                paidAt: new Date(),
+              }
+            : {}),
+        },
+        include: ORDER_WITH_RELATIONS_INCLUDE,
+      });
+
+      await checkAndCompleteTrip(order.tripId, tx);
+      return order;
+    });
+
+    if (!updatedOrder) {
+      return res.status(409).json({
+        success: false,
+        message: 'Đơn hàng đã thay đổi trạng thái trước đó, vui lòng tải lại dữ liệu.',
+      });
+    }
+
+    const needsRefundNotice =
+      updatedOrder.paymentMethod !== PaymentMethod.COD &&
+      updatedOrder.paymentStatus === PaymentStatus.PAID;
+
+    const message = isFullRejection
+      ? needsRefundNotice
+        ? `Đã ghi nhận khách từ chối toàn bộ đơn ${updatedOrder.orderCode}, hoàn tồn kho về depot. Đơn đã thanh toán trước cần hoàn tiền!`
+        : `Đã ghi nhận khách từ chối toàn bộ đơn ${updatedOrder.orderCode} và hoàn tồn kho về depot.`
+      : shouldMarkPartialCodPaid
+        ? `Đã ghi nhận từ chối một phần đơn ${updatedOrder.orderCode}, hoàn kho phần trả lại và ghi nhận thu hộ COD phần đã giao!`
+        : needsRefundNotice
+          ? `Đã ghi nhận từ chối một phần đơn ${updatedOrder.orderCode}, hoàn kho phần trả lại. Đơn đã thanh toán trước cần hoàn tiền phần chênh lệch!`
+          : `Đã ghi nhận từ chối một phần đơn ${updatedOrder.orderCode} và hoàn kho phần trả lại.`;
+
+    res.json({
+      success: true,
+      message,
       data: updatedOrder,
     });
   } catch (error: any) {

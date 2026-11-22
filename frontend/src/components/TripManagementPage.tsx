@@ -3,6 +3,7 @@ import {
   CheckCircle2,
   Clock,
   Navigation,
+  PackageX,
   Play,
   Plus,
   Route as RouteIcon,
@@ -33,6 +34,7 @@ import {
   DELIVERY_HOURS,
   PAYMENT_METHOD_CONFIG,
   PAYMENT_STATUS_CONFIG,
+  REJECTION_REASON_CONFIG,
   STATUS_CONFIG,
   TRIP_STATUS_CONFIG,
   TRIP_STATUS_TABS,
@@ -45,7 +47,11 @@ import {
   formatTimeslot,
   formatVND,
   getOrderCodAmount,
+  getOrderNetAmount,
+  getOrderRejectedAmount,
   isOrderPrepaid,
+  isOrderRefundPending,
+  isOrderRejectedStatus,
   isOrderUnpaidOnline,
   toIsoDateString,
   type Driver,
@@ -77,6 +83,7 @@ interface TripManagementPageProps {
   onCancelTrip: (tripId: number) => Promise<void>;
   onCompleteDelivery: (orderId: number) => Promise<void>;
   onFailDelivery: (orderId: number) => Promise<void>;
+  onOpenRejectDelivery: (order: Order) => void;
 }
 
 function getTripStatusMeta(status: string) {
@@ -106,6 +113,7 @@ export function TripManagementPage({
   onCancelTrip,
   onCompleteDelivery,
   onFailDelivery,
+  onOpenRejectDelivery,
 }: TripManagementPageProps) {
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [deliveryDateFilter, setDeliveryDateFilter] = useState<string>('');
@@ -448,7 +456,11 @@ export function TripManagementPage({
                   const statusMeta = getTripStatusMeta(trip.status);
                   const tripOrders = trip.orders ?? [];
                   const doneCount = tripOrders.filter(
-                    (o) => o.status === 'COMPLETED' || o.status === 'FAILED'
+                    (o) =>
+                      o.status === 'COMPLETED' ||
+                      o.status === 'PARTIALLY_REJECTED' ||
+                      o.status === 'REJECTED' ||
+                      o.status === 'FAILED'
                   ).length;
 
                   return (
@@ -720,7 +732,36 @@ export function TripManagementPage({
                                   variant={paymentStatusMeta.badgeVariant}
                                 />
                               )}
+                              {isOrderRefundPending(stopOrder) && (
+                                <Badge
+                                  label={`Cần hoàn tiền ${formatVND(getOrderRejectedAmount(stopOrder))}`}
+                                  variant="warning"
+                                />
+                              )}
                             </div>
+                            {isOrderRejectedStatus(stopOrder.status) && (
+                              <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                                {stopOrder.rejectionReason && (
+                                  <Text
+                                    type="supporting"
+                                    size="2xs"
+                                    color="inherit"
+                                    className="text-error"
+                                  >
+                                    Lý do:{' '}
+                                    {REJECTION_REASON_CONFIG[stopOrder.rejectionReason]?.shortLabel ??
+                                      stopOrder.rejectionReason}
+                                    {stopOrder.rejectionNote ? ` — ${stopOrder.rejectionNote}` : ''}
+                                  </Text>
+                                )}
+                                {getOrderRejectedAmount(stopOrder) > 0 && (
+                                  <Text type="supporting" size="2xs" hasTabularNumbers>
+                                    (Trả -{formatVND(getOrderRejectedAmount(stopOrder))} • Nhận{' '}
+                                    {formatVND(getOrderNetAmount(stopOrder))})
+                                  </Text>
+                                )}
+                              </div>
+                            )}
                           </div>
                         </div>
 
@@ -737,6 +778,14 @@ export function TripManagementPage({
                                 size="sm"
                                 icon={<CheckCircle2 className="w-3.5 h-3.5" />}
                                 onClick={() => void onCompleteDelivery(stopOrder.id)}
+                              />
+                              <IconButton
+                                label={`Khách từ chối đơn ${stopOrder.orderCode}`}
+                                tooltip="Khách từ chối nhận hàng"
+                                variant="secondary"
+                                size="sm"
+                                icon={<PackageX className="w-3.5 h-3.5" />}
+                                onClick={() => onOpenRejectDelivery(stopOrder)}
                               />
                               <IconButton
                                 label={`Đánh dấu đơn ${stopOrder.orderCode} giao thất bại`}

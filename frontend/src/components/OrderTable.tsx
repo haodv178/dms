@@ -8,6 +8,7 @@ import {
   Navigation,
   Package,
   PackageCheck,
+  PackageX,
   Pencil,
   Search,
   ShoppingBag,
@@ -47,6 +48,7 @@ import {
   PAYMENT_METHOD_CONFIG,
   PAYMENT_STATUSES,
   PAYMENT_STATUS_CONFIG,
+  REJECTION_REASON_CONFIG,
   STATUS_CONFIG,
   STATUS_TABS,
   canRoleAssignDriver,
@@ -58,8 +60,12 @@ import {
   formatDeliveryDateShort,
   formatTimeslot,
   formatVND,
+  getOrderNetAmount,
+  getOrderRejectedAmount,
   isOrderAssignable,
   isOrderEditable,
+  isOrderRefundPending,
+  isOrderRejectedStatus,
   toIsoDateString,
   type BulkOrderActionType,
   type Order,
@@ -113,6 +119,7 @@ interface OrderTableProps {
   onCompletePacking: (id: number) => void;
   onCompleteDelivery: (id: number) => void;
   onFailDelivery: (id: number) => void;
+  onOpenRejectDelivery: (order: Order) => void;
 }
 
 function formatOrderCodesPreview(orders: Order[], limit = 6): string {
@@ -152,6 +159,7 @@ export function OrderTable({
   onCompletePacking,
   onCompleteDelivery,
   onFailDelivery,
+  onOpenRejectDelivery,
 }: OrderTableProps) {
   const [pendingConfirm, setPendingConfirm] = useState<PendingBulkConfirmation | null>(null);
   const [paymentModalOrder, setPaymentModalOrder] = useState<Order | null>(null);
@@ -711,7 +719,11 @@ export function OrderTable({
                                 <ShoppingBag className="w-3 h-3 shrink-0" />
                                 <Text type="supporting" size="2xs" maxLines={1}>
                                   {order.items
-                                    .map((i) => `${i.productName} (x${i.quantity})`)
+                                    .map((i) =>
+                                      i.rejectedQuantity && i.rejectedQuantity > 0
+                                        ? `${i.productName} (x${i.quantity}, trả ${i.rejectedQuantity})`
+                                        : `${i.productName} (x${i.quantity})`
+                                    )
                                     .join(', ')}
                                 </Text>
                               </div>
@@ -720,9 +732,27 @@ export function OrderTable({
                         </TableCell>
 
                         <TableCell>
-                          <Text type="label" size="sm" hasTabularNumbers>
-                            {formatVND(order.totalAmount)}
-                          </Text>
+                          <Stack direction="vertical" gap={0.5} className="whitespace-nowrap">
+                            <Text type="label" size="sm" hasTabularNumbers>
+                              {formatVND(order.totalAmount)}
+                            </Text>
+                            {getOrderRejectedAmount(order) > 0 && (
+                              <>
+                                <Text
+                                  type="supporting"
+                                  size="2xs"
+                                  color="inherit"
+                                  className="text-error"
+                                  hasTabularNumbers
+                                >
+                                  Trả lại: -{formatVND(getOrderRejectedAmount(order))}
+                                </Text>
+                                <Text type="label" size="2xs" color="accent" hasTabularNumbers>
+                                  Thực nhận: {formatVND(getOrderNetAmount(order))}
+                                </Text>
+                              </>
+                            )}
+                          </Stack>
                         </TableCell>
 
                         <TableCell>
@@ -747,6 +777,12 @@ export function OrderTable({
                                 />
                               )}
                             </Stack>
+                            {isOrderRefundPending(order) && (
+                              <Badge
+                                label={`Cần hoàn tiền ${formatVND(getOrderRejectedAmount(order))}`}
+                                variant="warning"
+                              />
+                            )}
                             {order.paymentReference && (
                               <Text type="supporting" size="2xs">
                                 Mã GD: {order.paymentReference}
@@ -756,10 +792,18 @@ export function OrderTable({
                         </TableCell>
 
                         <TableCell>
-                          <Badge
-                            label={statusMeta.label}
-                            variant={statusMeta.badgeVariant}
-                          />
+                          <Stack direction="vertical" gap={0.5}>
+                            <Badge
+                              label={statusMeta.label}
+                              variant={statusMeta.badgeVariant}
+                            />
+                            {isOrderRejectedStatus(order.status) && order.rejectionReason && (
+                              <Text type="supporting" size="2xs" maxLines={2}>
+                                Lý do: {REJECTION_REASON_CONFIG[order.rejectionReason]?.shortLabel ?? order.rejectionReason}
+                                {order.rejectionNote ? ` — ${order.rejectionNote}` : ''}
+                              </Text>
+                            )}
+                          </Stack>
                         </TableCell>
 
                         <TableCell>
@@ -843,6 +887,16 @@ export function OrderTable({
                                   icon={<CheckCircle2 className="w-3.5 h-3.5" />}
                                   onClick={() => onCompleteDelivery(order.id)}
                                 />
+                                {canRoleUpdateStopDelivery(role) && (
+                                  <IconButton
+                                    label={`Khách từ chối đơn ${order.orderCode}`}
+                                    tooltip="Khách từ chối nhận hàng"
+                                    variant="secondary"
+                                    size="sm"
+                                    icon={<PackageX className="w-3.5 h-3.5" />}
+                                    onClick={() => onOpenRejectDelivery(order)}
+                                  />
+                                )}
                                 <IconButton
                                   label="Đánh dấu giao thất bại"
                                   tooltip="Giao thất bại"
@@ -855,6 +909,8 @@ export function OrderTable({
                             )}
 
                             {(order.status === 'COMPLETED' ||
+                              order.status === 'PARTIALLY_REJECTED' ||
+                              order.status === 'REJECTED' ||
                               order.status === 'FAILED') && (
                               <Text type="supporting" size="xsm">
                                 Đã kết thúc
