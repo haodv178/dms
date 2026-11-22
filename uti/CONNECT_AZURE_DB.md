@@ -35,10 +35,9 @@ PGSSLMODE=require psql -h "$HOST" -p 5432 -U dmsadmin -d dms_db
      # Replace <YOUR_PUBLIC_IP> with your IP (e.g. from `curl ifconfig.me`)
      az postgres flexible-server firewall-rule create \
        --resource-group rg-dms-backend \
-       --name "$SERVER" \
-       --rule-name allow-my-ip \
-       --start-ip-address <YOUR_PUBLIC_IP> \
-       --end-ip-address <YOUR_PUBLIC_IP>
+       --server-name "$SERVER" \
+       --rule-name allowip \
+       --start-ip-address <YOUR_PUBLIC_IP>
      ```
 
 2. **Connect**:

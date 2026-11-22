@@ -1,5 +1,16 @@
-import { OrderStatus, PaymentMethod, PaymentStatus, PrismaClient } from '@prisma/client';
-import { checkDeliveryRadius, MAX_DELIVERY_DISTANCE_KM } from '../src/lib/geo';
+import {
+  OrderStatus,
+  PaymentMethod,
+  PaymentStatus,
+  PrismaClient,
+  RejectionReason,
+  Role,
+} from '@prisma/client';
+import {
+  checkDeliveryRadius,
+  haversineDistanceKm,
+  MAX_DELIVERY_DISTANCE_KM,
+} from '../src/lib/geo';
 import { seedProducts } from '../src/lib/seeder';
 import { DELIVERY_HOURS, getVietnamNowParts } from '../src/lib/timeslot';
 
@@ -859,18 +870,137 @@ const DISTRICT_LOCATIONS: DistrictLocation[] = [
 
 const APARTMENT_BLOCKS = ['Block A', 'Block B', 'Block C', 'Tháp 1', 'Tháp 2', 'Tháp A', 'Tháp B', 'Sảnh A', 'Sảnh B'];
 
-function parseOrderCount(argv: string[]): number {
+const ENDED_ORDER_STATUSES: OrderStatus[] = [
+  OrderStatus.COMPLETED,
+  OrderStatus.PARTIALLY_REJECTED,
+  OrderStatus.REJECTED,
+  OrderStatus.FAILED,
+  OrderStatus.CANCELLED,
+];
+
+const DRIVER_ASSIGNED_ENDED_STATUSES = new Set<OrderStatus>([
+  OrderStatus.COMPLETED,
+  OrderStatus.PARTIALLY_REJECTED,
+  OrderStatus.REJECTED,
+  OrderStatus.FAILED,
+]);
+
+const ENDED_ORDER_STATUS_SET = new Set<string>(ENDED_ORDER_STATUSES);
+const VALID_ORDER_STATUS_SET = new Set<string>(Object.values(OrderStatus));
+
+const WEIGHTED_ENDED_STATUSES: OrderStatus[] = [
+  OrderStatus.COMPLETED,
+  OrderStatus.COMPLETED,
+  OrderStatus.COMPLETED,
+  OrderStatus.COMPLETED,
+  OrderStatus.PARTIALLY_REJECTED,
+  OrderStatus.PARTIALLY_REJECTED,
+  OrderStatus.REJECTED,
+  OrderStatus.REJECTED,
+  OrderStatus.FAILED,
+  OrderStatus.FAILED,
+  OrderStatus.CANCELLED,
+  OrderStatus.CANCELLED,
+];
+
+const REJECTION_REASONS: RejectionReason[] = Object.values(RejectionReason);
+
+const REJECTION_NOTES: string[] = [
+  'Khách kiểm tra hàng không đúng mô tả trên đơn.',
+  'Bao bì sản phẩm bị móp méo trong quá trình vận chuyển.',
+  'Khách đổi ý không nhận một số sản phẩm khi giao tới.',
+  'Sản phẩm giao không đúng quy cách khách đặt.',
+  'Khách báo giao trễ hơn khung giờ mong muốn.',
+  'Khách không hài lòng chất lượng sản phẩm khi kiểm hàng.',
+];
+
+const CANCEL_REASONS: string[] = [
+  'Khách hàng yêu cầu hủy đơn',
+  'Khách đặt nhầm sản phẩm',
+  'Khách đổi địa chỉ giao hàng',
+  'Không liên hệ được với khách hàng để xác nhận',
+  'Khách muốn đặt lại vào khung giờ khác',
+];
+
+interface SeedOrdersOptions {
+  count: number;
+  ended: boolean;
+  statuses: OrderStatus[];
+}
+
+function parseBooleanFlagValue(rawValue: string, flagName: string): boolean {
+  const normalized = rawValue.trim().toLowerCase();
+  if (normalized === 'true' || normalized === '1' || normalized === 'yes') {
+    return true;
+  }
+  if (normalized === 'false' || normalized === '0' || normalized === 'no') {
+    return false;
+  }
+  console.error(
+    `Invalid boolean value for ${flagName}: "${rawValue}". Expected true or false.`
+  );
+  process.exit(1);
+}
+
+function parseStatusList(rawValue: string | undefined): OrderStatus[] {
+  if (!rawValue || !rawValue.trim()) {
+    console.error(
+      `Missing value for --status. Valid values: ${Object.values(OrderStatus).join(', ')}`
+    );
+    process.exit(1);
+  }
+
+  const parsed: OrderStatus[] = [];
+  for (const token of rawValue.split(',')) {
+    const normalized = token.trim().toUpperCase();
+    if (!normalized) continue;
+    if (!VALID_ORDER_STATUS_SET.has(normalized)) {
+      console.error(
+        `Invalid order status "${normalized}". Valid values: ${Object.values(OrderStatus).join(', ')}`
+      );
+      process.exit(1);
+    }
+    parsed.push(normalized as OrderStatus);
+  }
+
+  if (parsed.length === 0) {
+    console.error(
+      `Missing value for --status. Valid values: ${Object.values(OrderStatus).join(', ')}`
+    );
+    process.exit(1);
+  }
+
+  return parsed;
+}
+
+function printUsage() {
+  console.log(
+    `Usage: npm run seed:orders -- [count] [--ended] [--status <S1,S2>]\n` +
+      `       npm run seed:orders -- --count <number> [--ended]\n\n` +
+      `Options:\n` +
+      `  count, -n, --count     Number of sample orders to seed (default: ${DEFAULT_ORDER_COUNT})\n` +
+      `  -e, --ended[=bool]     Seed ended orders with random terminal statuses\n` +
+      `                         (${ENDED_ORDER_STATUSES.join(', ')})\n` +
+      `  --status <S1,S2>       Seed orders with specific comma-separated status(es)\n` +
+      `                         (e.g. --status=COMPLETED,CANCELLED,FAILED)\n` +
+      `  -h, --help             Show this help message\n\n` +
+      `Examples:\n` +
+      `  npm run seed:orders -- 20\n` +
+      `  npm run seed:orders -- 30 --ended\n` +
+      `  npm run seed:orders -- --count 15 --ended\n` +
+      `  npm run seed:orders -- 10 --status=COMPLETED,PARTIALLY_REJECTED,CANCELLED`
+  );
+}
+
+function parseArgs(argv: string[]): SeedOrdersOptions {
   let rawCount: string | undefined;
+  let ended = false;
+  const statuses: OrderStatus[] = [];
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--help' || arg === '-h') {
-      console.log(
-        `Usage: npm run seed:orders -- [count]\n` +
-          `       npm run seed:orders -- --count <number>\n\n` +
-          `Options:\n` +
-          `  count, -n, --count   Number of sample orders to seed (default: ${DEFAULT_ORDER_COUNT})`
-      );
+      printUsage();
       process.exit(0);
     } else if (arg === '--count' || arg === '-n') {
       rawCount = argv[++i];
@@ -878,24 +1008,47 @@ function parseOrderCount(argv: string[]): number {
       rawCount = arg.slice('--count='.length);
     } else if (arg.startsWith('-n=')) {
       rawCount = arg.slice('-n='.length);
+    } else if (arg === '--ended' || arg === '-e') {
+      ended = true;
+    } else if (arg.startsWith('--ended=')) {
+      ended = parseBooleanFlagValue(arg.slice('--ended='.length), '--ended');
+    } else if (arg.startsWith('-e=')) {
+      ended = parseBooleanFlagValue(arg.slice('-e='.length), '-e');
+    } else if (arg === '--status') {
+      statuses.push(...parseStatusList(argv[++i]));
+    } else if (arg.startsWith('--status=')) {
+      statuses.push(...parseStatusList(arg.slice('--status='.length)));
     } else if (!arg.startsWith('-') && rawCount === undefined) {
       rawCount = arg;
+    } else {
+      console.error(`Unknown argument: "${arg}". Run with --help for usage.`);
+      process.exit(1);
     }
   }
 
-  if (rawCount === undefined) {
-    return DEFAULT_ORDER_COUNT;
+  let count = DEFAULT_ORDER_COUNT;
+  if (rawCount !== undefined) {
+    const parsed = Number(rawCount);
+    if (!Number.isInteger(parsed) || parsed < 1) {
+      console.error(
+        `Invalid order count: "${rawCount}". Please provide a positive integer (default: ${DEFAULT_ORDER_COUNT}).`
+      );
+      process.exit(1);
+    }
+    count = parsed;
   }
 
-  const parsed = Number(rawCount);
-  if (!Number.isInteger(parsed) || parsed < 1) {
-    console.error(
-      `Invalid order count: "${rawCount}". Please provide a positive integer (default: ${DEFAULT_ORDER_COUNT}).`
-    );
-    process.exit(1);
+  if (ended && statuses.length > 0) {
+    const nonEnded = statuses.filter((s) => !ENDED_ORDER_STATUS_SET.has(s));
+    if (nonEnded.length > 0) {
+      console.error(
+        `Status(es) ${nonEnded.join(', ')} are not ended statuses. Ended statuses are: ${ENDED_ORDER_STATUSES.join(', ')}.`
+      );
+      process.exit(1);
+    }
   }
 
-  return parsed;
+  return { count, ended, statuses };
 }
 
 function randomInt(min: number, max: number): number {
@@ -969,7 +1122,82 @@ const WEIGHTED_PAYMENT_METHODS: PaymentMethod[] = [
   PaymentMethod.ZALOPAY,
 ];
 
-function generatePaymentInfo(seq: number, batchSuffix: string): {
+const MAX_LOOKBACK_DAYS = 365;
+const MAX_CREATE_TO_DELIVERY_GAP_DAYS = 7;
+
+function addCalendarDays(dateStr: string, deltaDays: number): string {
+  const [year, month, day] = dateStr.split('-').map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day + deltaDays));
+  const yyyy = date.getUTCFullYear();
+  const mm = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(date.getUTCDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function makeVietnamDateTime(
+  dateStr: string,
+  hour: number,
+  minute: number,
+  second: number
+): Date {
+  const hh = String(hour).padStart(2, '0');
+  const mm = String(minute).padStart(2, '0');
+  const ss = String(second).padStart(2, '0');
+  return new Date(`${dateStr}T${hh}:${mm}:${ss}+07:00`);
+}
+
+function generateOrderSchedule(now: Date): {
+  createdAt: Date;
+  deliveryDate: string;
+  hourDelivery: number;
+  eventTimestamp: Date;
+} {
+  const { deliveryDate: todayStr } = getVietnamNowParts(now);
+
+  // Pick deliveryDate within [today - 364 days, today] so createdDate can be
+  // strictly earlier (deliveryDate > createdDate) while still within 1 year of today.
+  const deliveryOffsetDays = randomInt(0, MAX_LOOKBACK_DAYS - 1);
+  const deliveryDate = addCalendarDays(todayStr, -deliveryOffsetDays);
+
+  const availableBeforeDelivery = MAX_LOOKBACK_DAYS - deliveryOffsetDays;
+  const gapDays = randomInt(
+    1,
+    Math.min(MAX_CREATE_TO_DELIVERY_GAP_DAYS, availableBeforeDelivery)
+  );
+  const createdDate = addCalendarDays(deliveryDate, -gapDays);
+
+  const createdAt = makeVietnamDateTime(
+    createdDate,
+    randomInt(7, 21),
+    randomInt(0, 59),
+    randomInt(0, 59)
+  );
+
+  const hourDelivery =
+    DELIVERY_HOURS[Math.floor(Math.random() * DELIVERY_HOURS.length)];
+  const rawDeliveryTime = makeVietnamDateTime(
+    deliveryDate,
+    hourDelivery,
+    randomInt(5, 55),
+    randomInt(0, 59)
+  );
+  const eventTimestamp =
+    rawDeliveryTime.getTime() > now.getTime() ? now : rawDeliveryTime;
+
+  return {
+    createdAt,
+    deliveryDate,
+    hourDelivery,
+    eventTimestamp,
+  };
+}
+
+function generatePaymentInfo(
+  seq: number,
+  batchSuffix: string,
+  createdAt: Date,
+  eventTimestamp: Date
+): {
   paymentMethod: PaymentMethod;
   paymentStatus: PaymentStatus;
   paidAt: Date | null;
@@ -1001,10 +1229,16 @@ function generatePaymentInfo(seq: number, batchSuffix: string): {
     ZALOPAY: 'ZP',
     VNPAY: 'VNP',
   };
+  const prepaidAt = new Date(
+    Math.min(
+      createdAt.getTime() + randomInt(1, 30) * 60_000,
+      eventTimestamp.getTime()
+    )
+  );
   return {
     paymentMethod,
     paymentStatus: PaymentStatus.PAID,
-    paidAt: new Date(),
+    paidAt: prepaidAt,
     paymentReference: `${prefixMap[paymentMethod]}-${batchSuffix}-${String(seq).padStart(4, '0')}`,
   };
 }
@@ -1034,8 +1268,238 @@ function generateAddress(): string {
   return `${landmark}${blockSuffix}, ${houseNo} ${street}, ${ward}, ${location.district}`;
 }
 
+interface SeedOrderItemInput {
+  productId: number;
+  sku: string;
+  productName: string;
+  quantity: number;
+  rejectedQuantity: number;
+  price: number;
+}
+
+function resolveOrderStatus(options: SeedOrdersOptions): OrderStatus {
+  if (options.statuses.length > 0) {
+    return pickRandom(options.statuses);
+  }
+  if (options.ended) {
+    return pickRandom(WEIGHTED_ENDED_STATUSES);
+  }
+  return OrderStatus.NEW;
+}
+
+function buildOrderStatusDetails(
+  status: OrderStatus,
+  rawItems: Array<{
+    productId: number;
+    sku: string;
+    productName: string;
+    quantity: number;
+    price: number;
+  }>,
+  paymentInfo: {
+    paymentMethod: PaymentMethod;
+    paymentStatus: PaymentStatus;
+    paidAt: Date | null;
+    paymentReference: string | null;
+  },
+  createdAt: Date,
+  eventTimestamp: Date
+): {
+  items: SeedOrderItemInput[];
+  totalAmount: number;
+  paymentStatus: PaymentStatus;
+  paidAt: Date | null;
+  rejectionReason: RejectionReason | null;
+  rejectionNote: string | null;
+  rejectedAt: Date | null;
+  rejectedAmount: number;
+  cancelReason: string | null;
+  cancelledAt: Date | null;
+} {
+  const items: SeedOrderItemInput[] = rawItems.map((item) => ({
+    ...item,
+    rejectedQuantity: 0,
+  }));
+
+  if (status === OrderStatus.PARTIALLY_REJECTED) {
+    const totalOrderedUnits = items.reduce((sum, item) => sum + item.quantity, 0);
+    if (totalOrderedUnits < 2 && items.length > 0) {
+      items[0].quantity = 2;
+    }
+  }
+
+  const totalAmount =
+    Math.round(
+      items.reduce((sum, item) => sum + item.price * item.quantity, 0) * 100
+    ) / 100;
+
+  let paymentStatus = paymentInfo.paymentStatus;
+  let paidAt = paymentInfo.paidAt;
+  let rejectionReason: RejectionReason | null = null;
+  let rejectionNote: string | null = null;
+  let rejectedAt: Date | null = null;
+  let rejectedAmount = 0;
+  let cancelReason: string | null = null;
+  let cancelledAt: Date | null = null;
+
+  if (status === OrderStatus.COMPLETED) {
+    if (paymentStatus === PaymentStatus.UNPAID) {
+      paymentStatus = PaymentStatus.PAID;
+      paidAt = eventTimestamp;
+    }
+  } else if (status === OrderStatus.PARTIALLY_REJECTED) {
+    const totalOrderedUnits = items.reduce((sum, item) => sum + item.quantity, 0);
+    let remainingToReject = randomInt(1, Math.max(1, totalOrderedUnits - 1));
+    const shuffledIndices = items.map((_, idx) => idx);
+    for (let idx = shuffledIndices.length - 1; idx > 0; idx--) {
+      const swapIdx = Math.floor(Math.random() * (idx + 1));
+      [shuffledIndices[idx], shuffledIndices[swapIdx]] = [
+        shuffledIndices[swapIdx],
+        shuffledIndices[idx],
+      ];
+    }
+
+    for (const itemIdx of shuffledIndices) {
+      if (remainingToReject <= 0) break;
+      const item = items[itemIdx];
+      const maxForItem = Math.min(item.quantity, remainingToReject);
+      const rejQty = randomInt(1, maxForItem);
+      item.rejectedQuantity = rejQty;
+      remainingToReject -= rejQty;
+    }
+
+    rejectedAmount =
+      Math.round(
+        items.reduce((sum, item) => sum + item.price * item.rejectedQuantity, 0) *
+          100
+      ) / 100;
+    rejectionReason = pickRandom(REJECTION_REASONS);
+    rejectionNote = Math.random() < 0.7 ? pickRandom(REJECTION_NOTES) : null;
+    rejectedAt = eventTimestamp;
+
+    if (
+      paymentInfo.paymentMethod === PaymentMethod.COD &&
+      paymentStatus === PaymentStatus.UNPAID
+    ) {
+      paymentStatus = PaymentStatus.PAID;
+      paidAt = eventTimestamp;
+    }
+  } else if (status === OrderStatus.REJECTED) {
+    for (const item of items) {
+      item.rejectedQuantity = item.quantity;
+    }
+    rejectedAmount = totalAmount;
+    rejectionReason = pickRandom(REJECTION_REASONS);
+    rejectionNote = Math.random() < 0.7 ? pickRandom(REJECTION_NOTES) : null;
+    rejectedAt = eventTimestamp;
+
+    if (
+      paymentInfo.paymentMethod !== PaymentMethod.COD &&
+      paymentStatus === PaymentStatus.PAID &&
+      Math.random() < 0.5
+    ) {
+      paymentStatus = PaymentStatus.REFUNDED;
+    }
+  } else if (status === OrderStatus.CANCELLED) {
+    cancelReason = pickRandom(CANCEL_REASONS);
+    cancelledAt = new Date(
+      Math.min(
+        createdAt.getTime() + randomInt(15, 240) * 60_000,
+        eventTimestamp.getTime()
+      )
+    );
+
+    if (
+      paymentInfo.paymentMethod !== PaymentMethod.COD &&
+      paymentStatus === PaymentStatus.PAID &&
+      Math.random() < 0.5
+    ) {
+      paymentStatus = PaymentStatus.REFUNDED;
+    }
+  }
+
+  return {
+    items,
+    totalAmount,
+    paymentStatus,
+    paidAt,
+    rejectionReason,
+    rejectionNote,
+    rejectedAt,
+    rejectedAmount,
+    cancelReason,
+    cancelledAt,
+  };
+}
+
+function estimateTripDistanceMeters(
+  storeLat: number,
+  storeLng: number,
+  stops: Array<{ latitude: number; longitude: number }>
+): number {
+  let km = 0;
+  let prevLat = storeLat;
+  let prevLng = storeLng;
+  for (const stop of stops) {
+    km += haversineDistanceKm(prevLat, prevLng, stop.latitude, stop.longitude);
+    prevLat = stop.latitude;
+    prevLng = stop.longitude;
+  }
+  km += haversineDistanceKm(prevLat, prevLng, storeLat, storeLng);
+  return Math.max(500, Math.round(km * 1.3 * 1000));
+}
+
+async function loadDriversByStore(): Promise<{
+  driversByStore: Map<number, number[]>;
+  allDriverIds: number[];
+}> {
+  let driverProfiles = await prisma.driverProfile.findMany({
+    where: {
+      isActive: true,
+      user: { isActive: true, role: Role.DRIVER },
+    },
+    select: { userId: true, storeId: true },
+    orderBy: { id: 'asc' },
+  });
+
+  if (driverProfiles.length === 0) {
+    driverProfiles = await prisma.driverProfile.findMany({
+      where: { user: { role: Role.DRIVER } },
+      select: { userId: true, storeId: true },
+      orderBy: { id: 'asc' },
+    });
+  }
+
+  const driversByStore = new Map<number, number[]>();
+  const allDriverIdSet = new Set<number>();
+
+  for (const profile of driverProfiles) {
+    const list = driversByStore.get(profile.storeId) ?? [];
+    list.push(profile.userId);
+    driversByStore.set(profile.storeId, list);
+    allDriverIdSet.add(profile.userId);
+  }
+
+  if (allDriverIdSet.size === 0) {
+    const fallbackDrivers = await prisma.user.findMany({
+      where: { role: Role.DRIVER },
+      select: { id: true },
+      orderBy: { id: 'asc' },
+    });
+    for (const driver of fallbackDrivers) {
+      allDriverIdSet.add(driver.id);
+    }
+  }
+
+  return {
+    driversByStore,
+    allDriverIds: Array.from(allDriverIdSet),
+  };
+}
+
 async function main() {
-  const count = parseOrderCount(process.argv.slice(2));
+  const options = parseArgs(process.argv.slice(2));
+  const { count } = options;
 
   let stores = await prisma.store.findMany({
     where: { isActive: true },
@@ -1071,83 +1535,234 @@ async function main() {
     }));
   }
 
+  const now = new Date();
   const batchSuffix = Date.now().toString().slice(-6);
+  const statusCounts: Partial<Record<OrderStatus, number>> = {};
+
+  interface PreparedOrder {
+    orderCode: string;
+    store: (typeof stores)[number];
+    customerName: string;
+    customerPhone: string;
+    customerAddress: string;
+    latitude: number;
+    longitude: number;
+    paymentMethod: PaymentMethod;
+    paymentReference: string | null;
+    createdAt: Date;
+    deliveryDate: string;
+    hourDelivery: number;
+    status: OrderStatus;
+    details: ReturnType<typeof buildOrderStatusDetails>;
+    tripId: number | null;
+    deliverySequence: number | null;
+  }
+
+  const preparedOrders: PreparedOrder[] = [];
+
+  for (let i = 0; i < count; i++) {
+    const seq = i + 1;
+    const store = stores[i % stores.length];
+    const { latitude, longitude } = generateCoordinatesNearStore(
+      store.latitude,
+      store.longitude
+    );
+
+    const itemCount = randomInt(1, Math.min(4, products.length));
+    const pickedIndices = new Set<number>();
+    while (pickedIndices.size < itemCount) {
+      pickedIndices.add(Math.floor(Math.random() * products.length));
+    }
+
+    const rawItems = Array.from(pickedIndices).map((idx) => {
+      const prod = products[idx];
+      return {
+        productId: prod.id,
+        sku: prod.sku,
+        productName: prod.name,
+        quantity: randomInt(1, 4),
+        price: Number(prod.price),
+      };
+    });
+
+    const orderCode = `ORD-${batchSuffix}-${String(seq).padStart(4, '0')}`;
+    const schedule = generateOrderSchedule(now);
+    const paymentInfo = generatePaymentInfo(
+      seq,
+      batchSuffix,
+      schedule.createdAt,
+      schedule.eventTimestamp
+    );
+
+    const status = resolveOrderStatus(options);
+    const details = buildOrderStatusDetails(
+      status,
+      rawItems,
+      paymentInfo,
+      schedule.createdAt,
+      schedule.eventTimestamp
+    );
+    statusCounts[status] = (statusCounts[status] ?? 0) + 1;
+
+    preparedOrders.push({
+      orderCode,
+      store,
+      customerName: generateCustomerName(),
+      customerPhone: generatePhoneNumber(),
+      customerAddress: generateAddress(),
+      latitude,
+      longitude,
+      paymentMethod: paymentInfo.paymentMethod,
+      paymentReference: paymentInfo.paymentReference,
+      createdAt: schedule.createdAt,
+      deliveryDate: schedule.deliveryDate,
+      hourDelivery: schedule.hourDelivery,
+      status,
+      details,
+      tripId: null,
+      deliverySequence: null,
+    });
+  }
+
+  const ordersNeedingDriver = preparedOrders.filter((order) =>
+    DRIVER_ASSIGNED_ENDED_STATUSES.has(order.status)
+  );
+
+  let createdTripsCount = 0;
+
+  if (ordersNeedingDriver.length > 0) {
+    const { driversByStore, allDriverIds } = await loadDriversByStore();
+    if (allDriverIds.length === 0) {
+      console.error(
+        'No drivers found in database to assign to ended orders. Please run "npm run seed" or "npm run seed:drivers" first.'
+      );
+      process.exit(1);
+    }
+
+    const tripGroups = new Map<string, PreparedOrder[]>();
+    for (const order of ordersNeedingDriver) {
+      const key = `${order.store.id}|${order.deliveryDate}|${order.hourDelivery}`;
+      const list = tripGroups.get(key) ?? [];
+      list.push(order);
+      tripGroups.set(key, list);
+    }
+
+    const groupEntries = Array.from(tripGroups.values());
+    const tripChunkSize = 20;
+    let tripSeq = 0;
+
+    for (let offset = 0; offset < groupEntries.length; offset += tripChunkSize) {
+      const slice = groupEntries.slice(offset, offset + tripChunkSize);
+      const tripOps = slice.map((group) => {
+        tripSeq += 1;
+        const first = group[0];
+        const storeDrivers = driversByStore.get(first.store.id);
+        const driverId =
+          storeDrivers && storeDrivers.length > 0
+            ? pickRandom(storeDrivers)
+            : pickRandom(allDriverIds);
+
+        const totalDistance = estimateTripDistanceMeters(
+          first.store.latitude,
+          first.store.longitude,
+          group
+        );
+
+        const maxOrderCreatedAtMs = Math.max(
+          ...group.map((order) => order.createdAt.getTime())
+        );
+        const slotStartMs = makeVietnamDateTime(
+          first.deliveryDate,
+          Math.max(0, first.hourDelivery - 1),
+          randomInt(0, 45),
+          0
+        ).getTime();
+        const tripCreatedAt = new Date(
+          Math.min(Math.max(slotStartMs, maxOrderCreatedAtMs + 5 * 60_000), now.getTime())
+        );
+
+        return prisma.trip.create({
+          data: {
+            tripCode: `TRIP-${batchSuffix}-${String(tripSeq).padStart(4, '0')}`,
+            storeId: first.store.id,
+            driverId,
+            status: 'COMPLETED',
+            totalDistance,
+            deliveryDate: first.deliveryDate,
+            hourDelivery: first.hourDelivery,
+            createdAt: tripCreatedAt,
+          },
+          select: { id: true },
+        });
+      });
+
+      const createdTrips = await prisma.$transaction(tripOps);
+      createdTripsCount += createdTrips.length;
+
+      createdTrips.forEach((trip, idx) => {
+        const group = slice[idx];
+        group.forEach((order, stopIdx) => {
+          order.tripId = trip.id;
+          order.deliverySequence = stopIdx + 1;
+        });
+      });
+    }
+  }
+
   const chunkSize = 20;
   let createdCount = 0;
 
-  for (let offset = 0; offset < count; offset += chunkSize) {
-    const batchEnd = Math.min(offset + chunkSize, count);
-    const operations = [];
-
-    for (let i = offset; i < batchEnd; i++) {
-      const seq = i + 1;
-      const store = stores[i % stores.length];
-      const { latitude, longitude } = generateCoordinatesNearStore(
-        store.latitude,
-        store.longitude
-      );
-
-      const itemCount = randomInt(1, Math.min(4, products.length));
-      const pickedIndices = new Set<number>();
-      while (pickedIndices.size < itemCount) {
-        pickedIndices.add(Math.floor(Math.random() * products.length));
-      }
-
-      const orderItems = Array.from(pickedIndices).map((idx) => {
-        const prod = products[idx];
-        return {
-          productId: prod.id,
-          sku: prod.sku,
-          productName: prod.name,
-          quantity: randomInt(1, 4),
-          price: Number(prod.price),
-        };
-      });
-
-      const totalAmount = orderItems.reduce(
-        (sum, item) => sum + item.price * item.quantity,
-        0
-      );
-
-      const orderCode = `ORD-${batchSuffix}-${String(seq).padStart(4, '0')}`;
-      const paymentInfo = generatePaymentInfo(seq, batchSuffix);
-      const { deliveryDate: todayDeliveryDate } = getVietnamNowParts();
-      const hourDelivery =
-        DELIVERY_HOURS[Math.floor(Math.random() * DELIVERY_HOURS.length)];
-
-      operations.push(
-        prisma.order.create({
-          data: {
-            orderCode,
-            storeId: store.id,
-            customerName: generateCustomerName(),
-            customerPhone: generatePhoneNumber(),
-            customerAddress: generateAddress(),
-            latitude,
-            longitude,
-            totalAmount,
-            paymentMethod: paymentInfo.paymentMethod,
-            paymentStatus: paymentInfo.paymentStatus,
-            paidAt: paymentInfo.paidAt,
-            paymentReference: paymentInfo.paymentReference,
-            deliveryDate: todayDeliveryDate,
-            hourDelivery,
-            status: OrderStatus.NEW,
-            items: {
-              create: orderItems,
-            },
+  for (let offset = 0; offset < preparedOrders.length; offset += chunkSize) {
+    const batch = preparedOrders.slice(offset, offset + chunkSize);
+    const operations = batch.map((order) =>
+      prisma.order.create({
+        data: {
+          orderCode: order.orderCode,
+          storeId: order.store.id,
+          customerName: order.customerName,
+          customerPhone: order.customerPhone,
+          customerAddress: order.customerAddress,
+          latitude: order.latitude,
+          longitude: order.longitude,
+          totalAmount: order.details.totalAmount,
+          paymentMethod: order.paymentMethod,
+          paymentStatus: order.details.paymentStatus,
+          paidAt: order.details.paidAt,
+          paymentReference: order.paymentReference,
+          deliveryDate: order.deliveryDate,
+          hourDelivery: order.hourDelivery,
+          createdAt: order.createdAt,
+          status: order.status,
+          rejectionReason: order.details.rejectionReason,
+          rejectionNote: order.details.rejectionNote,
+          rejectedAt: order.details.rejectedAt,
+          rejectedAmount: order.details.rejectedAmount,
+          cancelReason: order.details.cancelReason,
+          cancelledAt: order.details.cancelledAt,
+          tripId: order.tripId,
+          deliverySequence: order.deliverySequence,
+          items: {
+            create: order.details.items,
           },
-        })
-      );
-    }
+        },
+      })
+    );
 
     const created = await prisma.$transaction(operations);
     createdCount += created.length;
   }
 
+  const statusBreakdown = Object.entries(statusCounts)
+    .map(([status, qty]) => `${status}=${qty}`)
+    .join(', ');
+
   const totalOrders = await prisma.order.count();
+  const tripSummary =
+    createdTripsCount > 0
+      ? ` (assigned to drivers via ${createdTripsCount} completed trip(s))`
+      : '';
   console.log(
-    `Seeded ${createdCount} order(s) across ${stores.length} store(s). Total orders in database: ${totalOrders}`
+    `Seeded ${createdCount} order(s) [${statusBreakdown}]${tripSummary} across ${stores.length} store(s). Total orders in database: ${totalOrders}`
   );
 }
 

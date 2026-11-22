@@ -41,8 +41,8 @@ const BACKEND_SCRIPT_META: Record<string, CommandMeta> = {
     description: 'Seed additional drivers for each active depot',
   },
   'seed:orders': {
-    description: 'Seed random sample orders across active depots',
-    usage: 'npm run seed:orders -- [count]  (or --count <n>, --help)',
+    description: 'Seed random sample orders across active depots (supports --ended and --status)',
+    usage: 'npm run seed:orders -- [count] [--ended] [--status=S1,S2]  (or --count <n>, --help)',
   },
   'delete:orders': {
     description: 'Delete orders by filter (--all, --status, --store, --depot, --code, --id)',

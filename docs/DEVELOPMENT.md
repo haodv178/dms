@@ -71,6 +71,12 @@ npm --prefix backend run seed:orders
 npm --prefix backend run seed:orders -- 50
 # hoặc
 npm --prefix backend run seed:orders -- --count 50
+
+# Sinh đơn hàng đã kết thúc (ngẫu nhiên COMPLETED, PARTIALLY_REJECTED, REJECTED, FAILED, CANCELLED)
+npm --prefix backend run seed:orders -- 30 --ended
+
+# Sinh đơn hàng theo danh sách trạng thái cụ thể
+npm --prefix backend run seed:orders -- 10 --status=COMPLETED,PARTIALLY_REJECTED,CANCELLED
 ```
 
 ### Sinh nhanh 1.000 sản phẩm mẫu (kiểm thử phân trang)
