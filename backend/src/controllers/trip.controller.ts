@@ -342,10 +342,20 @@ export const optimizeAndCreateTrip = async (req: Request, res: Response) => {
       solverDetails: route,
     });
   } catch (error: any) {
-    console.error('Error optimizing trip:', error?.message);
+    console.error('Error optimizing trip:', {
+      solverUrl: PYTHON_SOLVER_URL,
+      status: error?.response?.status,
+      data: error?.response?.data,
+      message: error?.message,
+    });
+    const detail =
+      error?.response?.data?.message ||
+      error?.response?.data?.detail ||
+      error?.response?.data?.error ||
+      error.message;
     res.status(500).json({
       success: false,
-      message: `Lỗi tối ưu lộ trình: ${error?.response?.data?.message || error.message}`,
+      message: `Lỗi tối ưu lộ trình: ${detail}`,
     });
   }
 };
@@ -715,10 +725,20 @@ export const reoptimizeTrip = async (req: Request, res: Response) => {
       solverDetails: route,
     });
   } catch (error: any) {
-    console.error('Error re-optimizing trip:', error?.message);
+    console.error('Error re-optimizing trip:', {
+      solverUrl: PYTHON_SOLVER_URL,
+      status: error?.response?.status,
+      data: error?.response?.data,
+      message: error?.message,
+    });
+    const detail =
+      error?.response?.data?.message ||
+      error?.response?.data?.detail ||
+      error?.response?.data?.error ||
+      error.message;
     res.status(500).json({
       success: false,
-      message: `Lỗi tối ưu lại lộ trình: ${error?.response?.data?.message || error.message}`,
+      message: `Lỗi tối ưu lại lộ trình: ${detail}`,
     });
   }
 };
