@@ -123,7 +123,20 @@ function stripVietnamese(input: string): string {
     .replace(/đ/g, 'd')
     .replace(/Đ/g, 'D')
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '');
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .trim();
+}
+
+function buildEmailBase(fullName: string): string {
+  const parts = stripVietnamese(fullName).split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return 'user';
+  if (parts.length === 1) return parts[0];
+  const firstName = parts[parts.length - 1];
+  const initials = parts
+    .slice(0, -1)
+    .map((part) => part[0])
+    .join('');
+  return `${firstName}${initials}`;
 }
 
 function generateLicensePlate(vehicleType: (typeof VEHICLE_TYPES)[number]): string {
@@ -143,17 +156,13 @@ function generatePhone(): string {
 }
 
 async function generateUniqueEmail(
-  firstName: string,
-  lastName: string,
-  depotCode: string,
+  fullName: string,
   usedEmails: Set<string>
 ): Promise<string> {
-  const nameSlug = `${stripVietnamese(firstName)}.${stripVietnamese(lastName)}`;
-  const depotSlug = stripVietnamese(depotCode);
+  const base = buildEmailBase(fullName);
 
-  for (let attempt = 0; attempt < 20; attempt++) {
-    const suffix = randomDigits(3);
-    const email = `taixe.${nameSlug}.${depotSlug}.${suffix}@dms.vn`;
+  for (let suffix = 1; suffix <= 999; suffix++) {
+    const email = suffix === 1 ? `${base}@dms.vn` : `${base}${suffix}@dms.vn`;
     if (usedEmails.has(email)) continue;
     const existing = await prisma.user.findUnique({
       where: { email },
@@ -165,7 +174,7 @@ async function generateUniqueEmail(
     }
   }
 
-  const fallback = `taixe.${depotSlug}.${Date.now()}.${randomDigits(3)}@dms.vn`;
+  const fallback = `${base}${Date.now()}@dms.vn`;
   usedEmails.add(fallback);
   return fallback;
 }
@@ -212,7 +221,7 @@ async function main() {
       const firstName = pickRandom(FIRST_NAMES);
       const fullName = `${lastName} ${middleName} ${firstName}`;
 
-      const email = await generateUniqueEmail(firstName, lastName, depotCode, usedEmails);
+      const email = await generateUniqueEmail(fullName, usedEmails);
 
       let phone = generatePhone();
       while (usedPhones.has(phone)) {

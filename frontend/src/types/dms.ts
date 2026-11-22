@@ -249,6 +249,15 @@ export function getDefaultDeliveryDate(): string {
   return `${y}-${m}-${d}`;
 }
 
+export function isDeliveryDateBeforeToday(
+  dateStr: string | null | undefined,
+  today: string = getDefaultDeliveryDate()
+): boolean {
+  const normalized = toIsoDateString(dateStr);
+  if (!normalized) return false;
+  return normalized < today;
+}
+
 export function getDefaultDeliveryHour(): DeliveryHour {
   const formatter = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Ho_Chi_Minh',
@@ -666,14 +675,14 @@ export const ROLE_META: Record<
   WAREHOUSE: {
     label: 'Nhân viên Kho (WAREHOUSE)',
     shortLabel: 'WAREHOUSE',
-    email: 'kho@dms.vn',
+    email: 'linhdn@dms.vn',
     badgeVariant: 'orange',
     desc: 'Tiếp nhận đơn mới (NEW), thực hiện Nhặt hàng (PICKING) và Đóng gói (PACKED)',
   },
   DRIVER: {
     label: 'Tài xế Giao hàng (DRIVER)',
     shortLabel: 'DRIVER',
-    email: 'taixe@dms.vn',
+    email: 'luannv@dms.vn',
     badgeVariant: 'green',
     desc: 'Di chuyển theo thứ tự điểm dừng tối ưu (#1, #2, #3...) và xác nhận giao hàng',
   },

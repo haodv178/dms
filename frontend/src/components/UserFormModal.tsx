@@ -83,7 +83,7 @@ export function UserFormModal({
                 isRequired
                 width="100%"
                 size="sm"
-                placeholder="nhanvien@dms.vn"
+                placeholder="linhdn@dms.vn"
                 value={form.email}
                 onChange={(val) => onFormChange({ ...form, email: val })}
               />

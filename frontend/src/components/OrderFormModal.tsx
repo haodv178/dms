@@ -33,7 +33,9 @@ import {
   formatDeliveryDateShort,
   formatTimeslot,
   formatVND,
+  getDefaultDeliveryDate,
   haversineDistanceKm,
+  isDeliveryDateBeforeToday,
   toIsoDateString,
   type DeliveryHour,
   type Order,
@@ -354,6 +356,9 @@ export function OrderFormModal({
   }, [hasValidCoords, selectedStore.latitude, selectedStore.longitude, parsedLat, parsedLng]);
 
   const isOutOfRange = distanceKm !== null && distanceKm > MAX_DELIVERY_DISTANCE_KM;
+  const todayDeliveryDate = getDefaultDeliveryDate();
+  const minDeliveryDate = toIsoDateString(todayDeliveryDate);
+  const isDeliveryDatePast = isDeliveryDateBeforeToday(form.deliveryDate, todayDeliveryDate);
 
   const computedTotal = useMemo(
     () => computeOrderFormTotal(form.items),
@@ -550,7 +555,7 @@ export function OrderFormModal({
                   </div>
                   <Badge
                     label={`${formatDeliveryDateShort(form.deliveryDate)} • ${formatTimeslot(form.hourDelivery)}`}
-                    variant="blue"
+                    variant={isDeliveryDatePast ? 'error' : 'blue'}
                   />
                 </div>
 
@@ -561,7 +566,16 @@ export function OrderFormModal({
                     width="100%"
                     size="sm"
                     format="system_date"
+                    min={minDeliveryDate}
                     value={toIsoDateString(form.deliveryDate)}
+                    status={
+                      isDeliveryDatePast
+                        ? {
+                            type: 'error',
+                            message: `Ngày giao hàng không được nhỏ hơn hôm nay (${formatDeliveryDateShort(todayDeliveryDate)}).`,
+                          }
+                        : undefined
+                    }
                     onChange={(val) =>
                       onFormChange({ ...form, deliveryDate: val ?? form.deliveryDate })
                     }
@@ -586,6 +600,15 @@ export function OrderFormModal({
                     }
                   />
                 </div>
+
+                {isDeliveryDatePast && (
+                  <div className="flex items-start gap-2 p-2.5 rounded-lg bg-red-500/10 border border-red-500/30 text-red-600 dark:text-red-400">
+                    <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                    <Text type="supporting" size="2xs">
+                      Ngày giao hàng đang chọn (<strong>{formatDeliveryDateShort(form.deliveryDate)}</strong>) nhỏ hơn hôm nay (<strong>{formatDeliveryDateShort(todayDeliveryDate)}</strong>). Vui lòng chọn ngày giao hàng từ hôm nay trở đi.
+                    </Text>
+                  </div>
+                )}
               </div>
 
               {/* Payment Info */}
@@ -975,7 +998,7 @@ export function OrderFormModal({
                 variant="primary"
                 size="sm"
                 isLoading={submitting}
-                isDisabled={isOutOfRange || hasStockConflict}
+                isDisabled={isOutOfRange || hasStockConflict || isDeliveryDatePast}
               />
             </div>
           </LayoutFooter>

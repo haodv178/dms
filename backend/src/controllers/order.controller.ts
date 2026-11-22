@@ -19,6 +19,7 @@ import {
   getDefaultDeliverySlot,
   parseDeliveryDate,
   parseHourDelivery,
+  validateDeliveryDateNotPast,
 } from '../lib/timeslot';
 
 const VALID_PAYMENT_METHODS = new Set<string>(Object.values(PaymentMethod));
@@ -341,6 +342,10 @@ export const createOrder = async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, message: parsedDeliveryDate.error });
     }
     const resolvedDeliveryDate = parsedDeliveryDate.value ?? defaultSlot.deliveryDate;
+    const deliveryDateCheck = validateDeliveryDateNotPast(resolvedDeliveryDate);
+    if (!deliveryDateCheck.ok) {
+      return res.status(400).json({ success: false, message: deliveryDateCheck.error });
+    }
 
     const parsedHourDelivery = parseHourDelivery(hourDelivery);
     if (parsedHourDelivery.error) {
@@ -524,6 +529,10 @@ export const updateOrder = async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, message: parsedDeliveryDate.error });
     }
     const resolvedDeliveryDate = parsedDeliveryDate.value ?? existingOrder.deliveryDate;
+    const deliveryDateCheck = validateDeliveryDateNotPast(resolvedDeliveryDate);
+    if (!deliveryDateCheck.ok) {
+      return res.status(400).json({ success: false, message: deliveryDateCheck.error });
+    }
 
     const parsedHourDelivery = parseHourDelivery(hourDelivery);
     if (parsedHourDelivery.error) {

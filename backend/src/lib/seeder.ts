@@ -4,8 +4,8 @@ import { DELIVERY_HOURS, getVietnamNowParts } from './timeslot';
 
 const SAMPLE_DRIVERS = [
   {
-    email: 'taixe@dms.vn',
-    name: 'Tài xế Nguyễn Văn A',
+    email: 'luannv@dms.vn',
+    name: 'Nguyễn Văn Luân',
     phone: '0901234567',
     vehicleType: 'Xe máy',
     licensePlate: '59X3-123.45',
@@ -14,7 +14,7 @@ const SAMPLE_DRIVERS = [
     notes: 'Tài xế khu vực Quận 7 & Quận 4',
   },
   {
-    email: 'taixe.binh@dms.vn',
+    email: 'binhtq@dms.vn',
     name: 'Trần Quốc Bình',
     phone: '0902345678',
     vehicleType: 'Xe máy',
@@ -24,7 +24,7 @@ const SAMPLE_DRIVERS = [
     notes: 'Giao nhanh đơn hàng tươi sống',
   },
   {
-    email: 'taixe.cuong@dms.vn',
+    email: 'cuonglm@dms.vn',
     name: 'Lê Minh Cường',
     phone: '0903456789',
     vehicleType: 'Xe van',
@@ -34,7 +34,7 @@ const SAMPLE_DRIVERS = [
     notes: 'Chuyên đơn hàng cồng kềnh, thùng nước',
   },
   {
-    email: 'taixe.dung@dms.vn',
+    email: 'dungpt@dms.vn',
     name: 'Phạm Tiến Dũng',
     phone: '0904567890',
     vehicleType: 'Xe tải nhỏ',
@@ -44,7 +44,7 @@ const SAMPLE_DRIVERS = [
     notes: 'Tuyến Phú Mỹ Hưng & Nhà Bè',
   },
   {
-    email: 'taixe.hung@dms.vn',
+    email: 'hungvt@dms.vn',
     name: 'Võ Thanh Hùng',
     phone: '0905678901',
     vehicleType: 'Xe máy',
@@ -199,31 +199,31 @@ export async function runSeed(prisma: PrismaClient, resetOrders = true) {
   const defaultHashedPassword = await hashPassword(DEFAULT_DEMO_PASSWORD);
   const admin = await prisma.user.upsert({
     where: { email: 'admin@dms.vn' },
-    update: { name: 'Quản lý Điều phối', role: Role.ADMIN },
+    update: { name: 'Admin', role: Role.ADMIN },
     create: {
       email: 'admin@dms.vn',
       password: defaultHashedPassword,
-      name: 'Quản lý Điều phối',
+      name: 'Admin',
       role: Role.ADMIN,
     },
   });
   const warehouse = await prisma.user.upsert({
-    where: { email: 'kho@dms.vn' },
-    update: { name: 'Nhân viên Kho', role: Role.WAREHOUSE },
+    where: { email: 'linhdn@dms.vn' },
+    update: { name: 'Dương Ngọc Linh', role: Role.WAREHOUSE },
     create: {
-      email: 'kho@dms.vn',
+      email: 'linhdn@dms.vn',
       password: defaultHashedPassword,
-      name: 'Nhân viên Kho',
+      name: 'Dương Ngọc Linh',
       role: Role.WAREHOUSE,
     },
   });
   const driver = await prisma.user.upsert({
-    where: { email: 'taixe@dms.vn' },
-    update: { name: 'Tài xế Nguyễn Văn A', role: Role.DRIVER },
+    where: { email: 'luannv@dms.vn' },
+    update: { name: 'Nguyễn Văn Luân', role: Role.DRIVER },
     create: {
-      email: 'taixe@dms.vn',
+      email: 'luannv@dms.vn',
       password: defaultHashedPassword,
-      name: 'Tài xế Nguyễn Văn A',
+      name: 'Nguyễn Văn Luân',
       role: Role.DRIVER,
     },
   });

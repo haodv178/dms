@@ -1,15 +1,11 @@
 import {
-  ArrowRight,
   ClipboardList,
   KeyRound,
   LogOut,
-  Monitor,
-  Moon,
   Package,
   Plus,
   Route,
   ShieldCheck,
-  Sun,
   Truck,
   Users,
   Warehouse,
@@ -21,20 +17,16 @@ import { IconButton } from '@astryxdesign/core/IconButton';
 import { SegmentedControl, SegmentedControlItem } from '@astryxdesign/core/SegmentedControl';
 import { Text } from '@astryxdesign/core/Text';
 import {
-  ROLE_META,
   canRoleAccessPage,
   canRoleEditOrders,
   type ActivePage,
   type AuthUser,
-  type ThemeMode,
 } from '../types/dms';
 
 interface HeaderProps {
   user: AuthUser;
   activePage: ActivePage;
   onActivePageChange: (page: ActivePage) => void;
-  themeMode: ThemeMode;
-  onThemeModeChange: (mode: ThemeMode) => void;
   counts: Record<string, number>;
   tripsCount: number;
   productsCount: number;
@@ -50,8 +42,6 @@ export function Header({
   user,
   activePage,
   onActivePageChange,
-  themeMode,
-  onThemeModeChange,
   counts,
   tripsCount,
   productsCount,
@@ -62,7 +52,6 @@ export function Header({
   onOpenChangePassword,
   onLogout,
 }: HeaderProps) {
-  const activeRole = ROLE_META[user.role];
   const canCreateOrder = canRoleEditOrders(user.role);
 
   return (
@@ -132,29 +121,6 @@ export function Header({
             )}
           </SegmentedControl>
 
-          <SegmentedControl
-            label="Giao diện sáng hoặc tối"
-            size="sm"
-            value={themeMode}
-            onChange={(val) => onThemeModeChange(val as ThemeMode)}
-          >
-            <SegmentedControlItem
-              value="light"
-              label="Sáng"
-              icon={<Sun className="w-3.5 h-3.5" />}
-            />
-            <SegmentedControlItem
-              value="system"
-              label="Hệ thống"
-              icon={<Monitor className="w-3.5 h-3.5" />}
-            />
-            <SegmentedControlItem
-              value="dark"
-              label="Tối"
-              icon={<Moon className="w-3.5 h-3.5" />}
-            />
-          </SegmentedControl>
-
           {canCreateOrder && (
             <Button
               label="Tạo đơn mới"
@@ -190,44 +156,6 @@ export function Header({
               icon={<LogOut className="w-3.5 h-3.5" />}
               onClick={onLogout}
             />
-          </div>
-        </div>
-      </div>
-
-      {/* Role Contextual Guide Bar */}
-      <div className="bg-muted border-t border-border py-2 px-4 sm:px-6">
-        <div className="max-w-[1600px] mx-auto flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-2 flex-wrap">
-            <Badge label={activeRole.shortLabel} variant={activeRole.badgeVariant} />
-            <Text type="supporting" size="xsm">
-              Đăng nhập:{' '}
-              <Text type="label" size="xsm" color="primary">
-                {user.name} ({user.email})
-              </Text>{' '}
-              — {activeRole.desc}
-            </Text>
-          </div>
-
-          <div className="flex items-center gap-2 flex-wrap">
-            <Text type="supporting" size="xsm" hasTabularNumbers>
-              NEW ({counts.NEW ?? 0})
-            </Text>
-            <ArrowRight className="w-3 h-3 text-secondary" />
-            <Text type="supporting" size="xsm" hasTabularNumbers>
-              PICKING ({counts.PICKING ?? 0})
-            </Text>
-            <ArrowRight className="w-3 h-3 text-secondary" />
-            <Text type="supporting" size="xsm" hasTabularNumbers>
-              PACKED ({counts.PACKED ?? 0})
-            </Text>
-            <ArrowRight className="w-3 h-3 text-secondary" />
-            <Text type="supporting" size="xsm" hasTabularNumbers>
-              DELIVERING ({counts.DELIVERING ?? 0})
-            </Text>
-            <ArrowRight className="w-3 h-3 text-secondary" />
-            <Text type="label" size="xsm" color="accent" hasTabularNumbers>
-              COMPLETED ({counts.COMPLETED ?? 0})
-            </Text>
           </div>
         </div>
       </div>

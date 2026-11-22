@@ -72,10 +72,14 @@ import {
   createInitialOrderForm,
   createInitialProductForm,
   driverToFormState,
+  formatDeliveryDateShort,
+  getDefaultDeliveryDate,
   haversineDistanceKm,
+  isDeliveryDateBeforeToday,
   orderToFormState,
   productToFormState,
   storeToFormState,
+  toIsoDateString,
   userToFormState,
   type ActivePage,
   type AuthUser,
@@ -120,8 +124,6 @@ function readStoredThemeMode(): ThemeMode {
 interface DmsDashboardProps {
   user: AuthUser;
   onLogout: () => Promise<void>;
-  themeMode: ThemeMode;
-  onThemeModeChange: (mode: ThemeMode) => void;
   isDarkMode: boolean;
 }
 
@@ -140,8 +142,6 @@ function readInitialPage(role: AuthUser['role']): ActivePage {
 function DmsDashboard({
   user,
   onLogout,
-  themeMode,
-  onThemeModeChange,
   isDarkMode,
 }: DmsDashboardProps) {
   const showToast = useToast();
@@ -862,6 +862,20 @@ function DmsDashboard({
       return;
     }
 
+    const todayDeliveryDate = getDefaultDeliveryDate();
+    const normalizedDeliveryDate = toIsoDateString(orderForm.deliveryDate);
+    if (!normalizedDeliveryDate) {
+      notify('Vui lòng chọn ngày giao hàng hợp lệ.', 'error');
+      return;
+    }
+    if (isDeliveryDateBeforeToday(normalizedDeliveryDate, todayDeliveryDate)) {
+      notify(
+        `Ngày giao hàng (${formatDeliveryDateShort(normalizedDeliveryDate)}) không được nhỏ hơn hôm nay (${formatDeliveryDateShort(todayDeliveryDate)}).`,
+        'error'
+      );
+      return;
+    }
+
     const lat = Number(orderForm.latitude);
     const lng = Number(orderForm.longitude);
     if (
@@ -988,6 +1002,8 @@ function DmsDashboard({
         o.customerName.toLowerCase().includes(q) ||
         o.customerPhone.toLowerCase().includes(q) ||
         o.customerAddress.toLowerCase().includes(q) ||
+        (o.store?.name?.toLowerCase().includes(q) ?? false) ||
+        (o.items?.some((i) => i.productName.toLowerCase().includes(q)) ?? false) ||
         (o.paymentReference?.toLowerCase().includes(q) ?? false) ||
         (o.trip?.tripCode?.toLowerCase().includes(q) ?? false) ||
         (o.trip?.driver?.name?.toLowerCase().includes(q) ?? false)
@@ -1471,8 +1487,6 @@ function DmsDashboard({
         user={user}
         activePage={activePage}
         onActivePageChange={handleActivePageChange}
-        themeMode={themeMode}
-        onThemeModeChange={onThemeModeChange}
         counts={counts}
         tripsCount={trips.length}
         productsCount={productSummary.totalProducts}
@@ -1797,12 +1811,8 @@ function DmsDashboard({
 }
 
 function AppGate({
-  themeMode,
-  onThemeModeChange,
   isDarkMode,
 }: {
-  themeMode: ThemeMode;
-  onThemeModeChange: (mode: ThemeMode) => void;
   isDarkMode: boolean;
 }) {
   const { user, isInitializing, logout } = useAuth();
@@ -1823,15 +1833,13 @@ function AppGate({
     <DmsDashboard
       user={user}
       onLogout={logout}
-      themeMode={themeMode}
-      onThemeModeChange={onThemeModeChange}
       isDarkMode={isDarkMode}
     />
   );
 }
 
 export default function App() {
-  const [themeMode, setThemeMode] = useState<ThemeMode>(readStoredThemeMode);
+  const [themeMode] = useState<ThemeMode>(readStoredThemeMode);
   const [systemPrefersDark, setSystemPrefersDark] = useState<boolean>(() =>
     typeof window !== 'undefined'
       ? window.matchMedia('(prefers-color-scheme: dark)').matches
@@ -1845,15 +1853,6 @@ export default function App() {
     return () => media.removeEventListener('change', handler);
   }, []);
 
-  const handleThemeModeChange = (nextMode: ThemeMode) => {
-    setThemeMode(nextMode);
-    try {
-      window.localStorage.setItem(THEME_MODE_STORAGE_KEY, nextMode);
-    } catch {
-      // Ignore storage errors
-    }
-  };
-
   const isDarkMode =
     themeMode === 'dark' || (themeMode === 'system' && systemPrefersDark);
 
@@ -1861,11 +1860,7 @@ export default function App() {
     <Theme theme={themes[defaultThemeSlug]} mode={themeMode}>
       <LayerProvider>
         <AuthProvider>
-          <AppGate
-            themeMode={themeMode}
-            onThemeModeChange={handleThemeModeChange}
-            isDarkMode={isDarkMode}
-          />
+          <AppGate isDarkMode={isDarkMode} />
         </AuthProvider>
       </LayerProvider>
     </Theme>

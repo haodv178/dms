@@ -123,7 +123,7 @@ export function DriverFormModal({
                   size="sm"
                   value={form.email}
                   onChange={(val) => onFormChange({ ...form, email: val })}
-                  placeholder="VD: taixe@dms.vn"
+                  placeholder="VD: dungpt@dms.vn"
                 />
 
                 <TextInput

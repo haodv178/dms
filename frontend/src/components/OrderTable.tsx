@@ -1,19 +1,19 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   CheckCircle2,
   Clock,
+  Columns3,
   CreditCard,
   Layers,
-  MapPin,
   Navigation,
   Package,
   PackageCheck,
   PackageX,
   Pencil,
+  RotateCcw,
   Search,
   ShoppingBag,
   Sparkles,
-  Truck,
   UserMinus,
   UserPlus,
   X,
@@ -74,6 +74,63 @@ import {
 } from '../types/dms';
 
 type ConfirmableBulkAction = 'UNASSIGN_DRIVER' | 'COMPLETE_DELIVERY' | 'FAIL_DELIVERY';
+
+type OrderColumnKey =
+  | 'orderCode'
+  | 'hourDelivery'
+  | 'deliveryDate'
+  | 'createdAt'
+  | 'customerName'
+  | 'customerPhone'
+  | 'customerAddress'
+  | 'store'
+  | 'items'
+  | 'totalAmount'
+  | 'payment'
+  | 'status'
+  | 'driver'
+  | 'actions';
+
+interface OrderColumnDefinition {
+  key: OrderColumnKey;
+  label: string;
+}
+
+const ORDER_TABLE_COLUMNS: readonly OrderColumnDefinition[] = [
+  { key: 'orderCode', label: 'Mã đơn / Chuyến' },
+  { key: 'hourDelivery', label: 'Khung giờ giao' },
+  { key: 'deliveryDate', label: 'Ngày giao' },
+  { key: 'createdAt', label: 'Ngày tạo' },
+  { key: 'customerName', label: 'Khách hàng' },
+  { key: 'customerPhone', label: 'Số điện thoại' },
+  { key: 'customerAddress', label: 'Địa chỉ' },
+  { key: 'store', label: 'Kho' },
+  { key: 'items', label: 'Sản phẩm' },
+  { key: 'totalAmount', label: 'Tổng tiền' },
+  { key: 'payment', label: 'Thanh toán' },
+  { key: 'status', label: 'Trạng thái' },
+  { key: 'driver', label: 'Tài xế' },
+  { key: 'actions', label: 'Thao tác' },
+] as const;
+
+const ALL_ORDER_COLUMN_KEYS: readonly OrderColumnKey[] = ORDER_TABLE_COLUMNS.map((c) => c.key);
+const ORDER_COLUMNS_STORAGE_KEY = 'dms-order-table-visible-columns';
+
+function readStoredVisibleColumns(): OrderColumnKey[] {
+  try {
+    const raw = window.localStorage.getItem(ORDER_COLUMNS_STORAGE_KEY);
+    if (!raw) return [...ALL_ORDER_COLUMN_KEYS];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [...ALL_ORDER_COLUMN_KEYS];
+    const validSet = new Set<string>(ALL_ORDER_COLUMN_KEYS);
+    const filtered = parsed.filter(
+      (k): k is OrderColumnKey => typeof k === 'string' && validSet.has(k)
+    );
+    return filtered.length > 0 ? filtered : [...ALL_ORDER_COLUMN_KEYS];
+  } catch {
+    return [...ALL_ORDER_COLUMN_KEYS];
+  }
+}
 
 interface PendingBulkConfirmation {
   action: ConfirmableBulkAction;
@@ -166,6 +223,36 @@ export function OrderTable({
   const [paymentStatusDraft, setPaymentStatusDraft] = useState<PaymentStatus>('UNPAID');
   const [paymentRefDraft, setPaymentRefDraft] = useState('');
   const [paymentSaving, setPaymentSaving] = useState(false);
+  const [visibleColumns, setVisibleColumns] = useState<OrderColumnKey[]>(readStoredVisibleColumns);
+  const [showColumnConfig, setShowColumnConfig] = useState<boolean>(false);
+
+  const isAdmin = role === 'ADMIN';
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(ORDER_COLUMNS_STORAGE_KEY, JSON.stringify(visibleColumns));
+    } catch {
+      // Ignore storage access errors
+    }
+  }, [visibleColumns]);
+
+  const visibleColumnSet = useMemo(() => new Set<OrderColumnKey>(visibleColumns), [visibleColumns]);
+  const isColumnVisible = (key: OrderColumnKey) => visibleColumnSet.has(key);
+
+  const toggleColumnVisibility = (key: OrderColumnKey) => {
+    setVisibleColumns((prev) => {
+      if (prev.includes(key)) {
+        if (prev.length <= 1) return prev;
+        return prev.filter((item) => item !== key);
+      }
+      const nextSet = new Set([...prev, key]);
+      return ALL_ORDER_COLUMN_KEYS.filter((colKey) => nextSet.has(colKey));
+    });
+  };
+
+  const resetVisibleColumns = () => {
+    setVisibleColumns([...ALL_ORDER_COLUMN_KEYS]);
+  };
 
   const openPaymentModal = (order: Order) => {
     setPaymentModalOrder(order);
@@ -440,7 +527,76 @@ export function OrderTable({
                 />
               ))}
             </TabList>
+
+            {isAdmin && (
+              <div className="pb-2">
+                <Button
+                  label={`Cột hiển thị (${visibleColumns.length}/${ORDER_TABLE_COLUMNS.length})`}
+                  variant={showColumnConfig ? 'primary' : 'secondary'}
+                  size="sm"
+                  icon={<Columns3 className="w-3.5 h-3.5" />}
+                  onClick={() => setShowColumnConfig((prev) => !prev)}
+                />
+              </div>
+            )}
           </div>
+
+          {/* Admin Column Visibility Panel */}
+          {isAdmin && showColumnConfig && (
+            <div
+              role="region"
+              aria-label="Vùng chọn cột hiển thị bảng đơn hàng"
+              className="px-4 py-3 border-b border-border bg-muted flex flex-col gap-2"
+            >
+              <Stack direction="horizontal" align="center" justify="between" gap={2} wrap="wrap">
+                <Stack direction="horizontal" align="center" gap={2} wrap="wrap">
+                  <Columns3 className="w-4 h-4 text-accent shrink-0" />
+                  <Text type="label" size="sm">
+                    Chọn cột hiển thị (Admin)
+                  </Text>
+                  <Badge
+                    label={`${visibleColumns.length}/${ORDER_TABLE_COLUMNS.length} cột`}
+                    variant="neutral"
+                  />
+                </Stack>
+                <Stack direction="horizontal" align="center" gap={1.5}>
+                  {visibleColumns.length < ORDER_TABLE_COLUMNS.length && (
+                    <Button
+                      label="Hiện tất cả"
+                      variant="secondary"
+                      size="sm"
+                      icon={<RotateCcw className="w-3.5 h-3.5" />}
+                      onClick={resetVisibleColumns}
+                    />
+                  )}
+                  <Button
+                    label="Thu gọn"
+                    variant="ghost"
+                    size="sm"
+                    icon={<X className="w-3.5 h-3.5" />}
+                    onClick={() => setShowColumnConfig(false)}
+                  />
+                </Stack>
+              </Stack>
+
+              <Stack direction="horizontal" align="center" gap={3} wrap="wrap">
+                {ORDER_TABLE_COLUMNS.map((col) => {
+                  const checked = isColumnVisible(col.key);
+                  const isLastVisible = checked && visibleColumns.length === 1;
+                  return (
+                    <CheckboxInput
+                      key={col.key}
+                      size="sm"
+                      label={col.label}
+                      value={checked}
+                      isDisabled={isLastVisible}
+                      onChange={() => toggleColumnVisibility(col.key)}
+                    />
+                  );
+                })}
+              </Stack>
+            </div>
+          )}
 
           {/* Contextual Mass Actions Toolbar */}
           {selectedVisibleOrders.length > 0 && (
@@ -573,7 +729,7 @@ export function OrderTable({
             </div>
           )}
 
-          <div className="overflow-x-auto">
+          <div className="w-full [&_.astryx-table-scroll-wrapper]:max-h-[65vh] [&_.astryx-table-scroll-wrapper]:overflow-auto">
             {filteredOrders.length === 0 ? (
               <div className="py-12 px-4 text-center">
                 <Text type="supporting" size="sm">
@@ -583,34 +739,103 @@ export function OrderTable({
                 </Text>
               </div>
             ) : (
-              <Table>
-                <TableHeader>
+              <Table
+                density="balanced"
+                verticalAlign="top"
+                textOverflow="wrap"
+                hasHover
+                className="w-max min-w-full [&_th]:max-w-none [&_td:not(.max-w-80)]:max-w-none"
+              >
+                <TableHeader className="sticky top-0 z-10 bg-surface">
                   <TableRow>
-                    <TableHeaderCell>
-                      <CheckboxInput
-                        size="sm"
-                        label="Chọn tất cả đơn hàng đang hiển thị"
-                        isLabelHidden
-                        value={
-                          allVisibleSelected
-                            ? true
-                            : someVisibleSelected
-                              ? 'indeterminate'
-                              : false
-                        }
-                        isDisabled={bulkLoading}
-                        onChange={toggleSelectAllVisible}
-                      />
+                    <TableHeaderCell className="w-14 min-w-14 max-w-none overflow-visible whitespace-nowrap">
+                      <Stack direction="horizontal" align="center" justify="center">
+                        <CheckboxInput
+                          size="sm"
+                          label="Chọn tất cả đơn hàng đang hiển thị"
+                          isLabelHidden
+                          value={
+                            allVisibleSelected
+                              ? true
+                              : someVisibleSelected
+                                ? 'indeterminate'
+                                : false
+                          }
+                          isDisabled={bulkLoading}
+                          onChange={toggleSelectAllVisible}
+                        />
+                      </Stack>
                     </TableHeaderCell>
-                    <TableHeaderCell>Mã Đơn / Chuyến</TableHeaderCell>
-                    <TableHeaderCell>Khung Giờ Giao</TableHeaderCell>
-                    <TableHeaderCell>Ngày Tạo</TableHeaderCell>
-                    <TableHeaderCell>Khách Hàng &amp; Địa Chỉ</TableHeaderCell>
-                    <TableHeaderCell>Tổng Tiền</TableHeaderCell>
-                    <TableHeaderCell>Thanh Toán</TableHeaderCell>
-                    <TableHeaderCell>Trạng Thái</TableHeaderCell>
-                    <TableHeaderCell>Tài Xế</TableHeaderCell>
-                    <TableHeaderCell>Thao Tác ({role})</TableHeaderCell>
+                    {isColumnVisible('orderCode') && (
+                      <TableHeaderCell className="min-w-44 max-w-none whitespace-nowrap">
+                        Mã đơn / Chuyến
+                      </TableHeaderCell>
+                    )}
+                    {isColumnVisible('hourDelivery') && (
+                      <TableHeaderCell className="min-w-36 whitespace-nowrap">
+                        Khung giờ giao
+                      </TableHeaderCell>
+                    )}
+                    {isColumnVisible('deliveryDate') && (
+                      <TableHeaderCell className="min-w-28 whitespace-nowrap">
+                        Ngày giao
+                      </TableHeaderCell>
+                    )}
+                    {isColumnVisible('createdAt') && (
+                      <TableHeaderCell className="min-w-36 whitespace-nowrap">
+                        Ngày tạo
+                      </TableHeaderCell>
+                    )}
+                    {isColumnVisible('customerName') && (
+                      <TableHeaderCell className="min-w-40 whitespace-nowrap">
+                        Khách hàng
+                      </TableHeaderCell>
+                    )}
+                    {isColumnVisible('customerPhone') && (
+                      <TableHeaderCell className="min-w-32 whitespace-nowrap">
+                        Số điện thoại
+                      </TableHeaderCell>
+                    )}
+                    {isColumnVisible('customerAddress') && (
+                      <TableHeaderCell className="min-w-64 whitespace-nowrap">
+                        Địa chỉ
+                      </TableHeaderCell>
+                    )}
+                    {isColumnVisible('store') && (
+                      <TableHeaderCell className="min-w-32 whitespace-nowrap">
+                        Kho
+                      </TableHeaderCell>
+                    )}
+                    {isColumnVisible('items') && (
+                      <TableHeaderCell className="min-w-64 whitespace-nowrap">
+                        Sản phẩm
+                      </TableHeaderCell>
+                    )}
+                    {isColumnVisible('totalAmount') && (
+                      <TableHeaderCell className="min-w-32 whitespace-nowrap">
+                        Tổng tiền
+                      </TableHeaderCell>
+                    )}
+                    {isColumnVisible('payment') && (
+                      <TableHeaderCell className="min-w-44 whitespace-nowrap">
+                        Thanh toán
+                      </TableHeaderCell>
+                    )}
+                    {isColumnVisible('status') && (
+                      <TableHeaderCell className="min-w-40 whitespace-nowrap">
+                        Trạng thái
+                      </TableHeaderCell>
+                    )}
+                    {isColumnVisible('driver') && (
+                      <TableHeaderCell className="min-w-40 whitespace-nowrap">
+                        Tài xế
+                      </TableHeaderCell>
+                    )}
+                    {isColumnVisible('actions') && (
+                      <TableHeaderCell className="min-w-40 whitespace-nowrap">
+                        Thao tác ({role})
+                      </TableHeaderCell>
+                    )}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -630,294 +855,346 @@ export function OrderTable({
                           ? 'Đổi tài xế'
                           : 'Gán tài xế';
                     const isSelected = selectedIdSet.has(order.id);
+                    const itemsList = order.items ?? [];
+                    const fullItemsSummary = itemsList
+                      .map((i) =>
+                        i.rejectedQuantity && i.rejectedQuantity > 0
+                          ? `${i.productName} (x${i.quantity}, trả ${i.rejectedQuantity})`
+                          : `${i.productName} (x${i.quantity})`
+                      )
+                      .join(', ');
 
                     return (
                       <TableRow key={order.id}>
-                        <TableCell>
-                          <CheckboxInput
-                            size="sm"
-                            label={`Chọn đơn hàng ${order.orderCode}`}
-                            isLabelHidden
-                            value={isSelected}
-                            isDisabled={bulkLoading}
-                            onChange={() => toggleSelectOrder(order.id)}
-                          />
+                        <TableCell className="w-14 min-w-14 max-w-none overflow-visible">
+                          <Stack direction="horizontal" align="center" justify="center">
+                            <CheckboxInput
+                              size="sm"
+                              label={`Chọn đơn hàng ${order.orderCode}`}
+                              isLabelHidden
+                              value={isSelected}
+                              isDisabled={bulkLoading}
+                              onChange={() => toggleSelectOrder(order.id)}
+                            />
+                          </Stack>
                         </TableCell>
 
-                        <TableCell>
-                          <div className="flex flex-col gap-1 whitespace-nowrap">
-                            <Text type="label" size="sm">
-                              {order.orderCode}
-                            </Text>
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                              {order.trip?.tripCode && (
-                                <Badge label={order.trip.tripCode} variant="blue" />
-                              )}
-                              {order.deliverySequence ? (
-                                <Badge
-                                  label={`Stop #${order.deliverySequence}`}
-                                  variant="purple"
-                                  icon={<Navigation className="w-3 h-3" />}
-                                />
-                              ) : (
-                                <Text type="supporting" size="2xs" hasTabularNumbers>
-                                  ID: #{order.id}
-                                </Text>
-                              )}
-                            </div>
-                          </div>
-                        </TableCell>
+                        {isColumnVisible('orderCode') && (
+                          <TableCell className="min-w-44 max-w-none">
+                            <Stack direction="vertical" gap={1}>
+                              <Text type="label" size="sm">
+                                {order.orderCode}
+                              </Text>
+                              <Stack direction="horizontal" align="center" gap={1} wrap="wrap">
+                                {order.trip?.tripCode && (
+                                  <Badge label={order.trip.tripCode} variant="blue" />
+                                )}
+                                {order.deliverySequence ? (
+                                  <Badge
+                                    label={`Stop #${order.deliverySequence}`}
+                                    variant="purple"
+                                    icon={<Navigation className="w-3 h-3" />}
+                                  />
+                                ) : (
+                                  <Text type="supporting" size="xsm" hasTabularNumbers>
+                                    ID: #{order.id}
+                                  </Text>
+                                )}
+                              </Stack>
+                            </Stack>
+                          </TableCell>
+                        )}
 
-                        <TableCell>
-                          <div className="flex flex-col gap-1 whitespace-nowrap">
+                        {isColumnVisible('hourDelivery') && (
+                          <TableCell className="min-w-36">
                             <Badge
                               label={formatTimeslot(order.hourDelivery)}
                               variant="blue"
                               icon={<Clock className="w-3 h-3" />}
                             />
-                            <Text type="supporting" size="2xs" hasTabularNumbers>
+                          </TableCell>
+                        )}
+
+                        {isColumnVisible('deliveryDate') && (
+                          <TableCell className="min-w-28">
+                            <Text type="body" size="sm" hasTabularNumbers>
                               {formatDeliveryDateShort(order.deliveryDate)}
                             </Text>
-                          </div>
-                        </TableCell>
+                          </TableCell>
+                        )}
 
-                        <TableCell>
-                          <div className="inline-flex items-center gap-1.5 whitespace-nowrap">
-                            <Clock className="w-3.5 h-3.5 text-secondary shrink-0" />
-                            <Text type="supporting" size="xsm" hasTabularNumbers>
+                        {isColumnVisible('createdAt') && (
+                          <TableCell className="min-w-36">
+                            <Text type="supporting" size="sm" hasTabularNumbers>
                               {formatDateTime(order.createdAt)}
                             </Text>
-                          </div>
-                        </TableCell>
+                          </TableCell>
+                        )}
 
-                        <TableCell>
-                          <div className="flex flex-col gap-0.5 max-w-md">
-                            <div className="flex items-center gap-1 flex-wrap">
-                              <Text type="label" size="sm">
-                                {order.customerName}
-                              </Text>
-                              <Text type="supporting" size="xsm">
-                                ({order.customerPhone})
-                              </Text>
-                            </div>
-                            <div className="flex items-start gap-1 text-secondary">
-                              <MapPin className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                              <Text type="supporting" size="xsm">
-                                {order.customerAddress}
-                              </Text>
-                            </div>
-                            {order.store?.name && (
-                              <div className="flex items-center gap-1 mt-0.5">
-                                <Badge
-                                  label={`Kho: ${order.store.name}`}
-                                  variant="neutral"
-                                />
-                              </div>
-                            )}
-                            {order.items && order.items.length > 0 && (
-                              <div className="flex items-center gap-1 text-secondary mt-0.5">
-                                <ShoppingBag className="w-3 h-3 shrink-0" />
-                                <Text type="supporting" size="2xs" maxLines={1}>
-                                  {order.items
-                                    .map((i) =>
-                                      i.rejectedQuantity && i.rejectedQuantity > 0
-                                        ? `${i.productName} (x${i.quantity}, trả ${i.rejectedQuantity})`
-                                        : `${i.productName} (x${i.quantity})`
-                                    )
-                                    .join(', ')}
-                                </Text>
-                              </div>
-                            )}
-                          </div>
-                        </TableCell>
-
-                        <TableCell>
-                          <Stack direction="vertical" gap={0.5} className="whitespace-nowrap">
-                            <Text type="label" size="sm" hasTabularNumbers>
-                              {formatVND(order.totalAmount)}
+                        {isColumnVisible('customerName') && (
+                          <TableCell className="min-w-40">
+                            <Text type="label" size="sm">
+                              {order.customerName}
                             </Text>
-                            {getOrderRejectedAmount(order) > 0 && (
-                              <>
-                                <Text
-                                  type="supporting"
-                                  size="2xs"
-                                  color="inherit"
-                                  className="text-error"
-                                  hasTabularNumbers
-                                >
-                                  Trả lại: -{formatVND(getOrderRejectedAmount(order))}
-                                </Text>
-                                <Text type="label" size="2xs" color="accent" hasTabularNumbers>
-                                  Thực nhận: {formatVND(getOrderNetAmount(order))}
-                                </Text>
-                              </>
-                            )}
-                          </Stack>
-                        </TableCell>
+                          </TableCell>
+                        )}
 
-                        <TableCell>
-                          <Stack direction="vertical" gap={1} className="whitespace-nowrap">
-                            <Stack direction="horizontal" align="center" gap={1}>
-                              <Badge
-                                label={paymentMethodMeta.shortLabel}
-                                variant={paymentMethodMeta.badgeVariant}
-                              />
-                              <Badge
-                                label={paymentStatusMeta.shortLabel}
-                                variant={paymentStatusMeta.badgeVariant}
-                              />
-                              {canRoleEditOrders(role) && (
-                                <IconButton
-                                  label={`Cập nhật thanh toán đơn ${order.orderCode}`}
-                                  tooltip="Cập nhật trạng thái thanh toán"
-                                  variant="ghost"
-                                  size="sm"
-                                  icon={<CreditCard className="w-3.5 h-3.5" />}
-                                  onClick={() => openPaymentModal(order)}
-                                />
-                              )}
-                            </Stack>
-                            {isOrderRefundPending(order) && (
-                              <Badge
-                                label={`Cần hoàn tiền ${formatVND(getOrderRejectedAmount(order))}`}
-                                variant="warning"
-                              />
-                            )}
-                            {order.paymentReference && (
-                              <Text type="supporting" size="2xs">
-                                Mã GD: {order.paymentReference}
+                        {isColumnVisible('customerPhone') && (
+                          <TableCell className="min-w-32">
+                            <Text type="body" size="sm" hasTabularNumbers>
+                              {order.customerPhone}
+                            </Text>
+                          </TableCell>
+                        )}
+
+                        {isColumnVisible('customerAddress') && (
+                          <TableCell className="min-w-64 max-w-80">
+                            <Text type="body" size="sm" maxLines={3}>
+                              {order.customerAddress}
+                            </Text>
+                          </TableCell>
+                        )}
+
+                        {isColumnVisible('store') && (
+                          <TableCell className="min-w-32">
+                            {order.store?.name ? (
+                              <Badge label={order.store.name} variant="neutral" />
+                            ) : (
+                              <Text type="supporting" size="sm">
+                                —
                               </Text>
                             )}
-                          </Stack>
-                        </TableCell>
+                          </TableCell>
+                        )}
 
-                        <TableCell>
-                          <Stack direction="vertical" gap={0.5}>
-                            <Badge
-                              label={statusMeta.label}
-                              variant={statusMeta.badgeVariant}
-                            />
-                            {isOrderRejectedStatus(order.status) && order.rejectionReason && (
-                              <Text type="supporting" size="2xs" maxLines={2}>
-                                Lý do: {REJECTION_REASON_CONFIG[order.rejectionReason]?.shortLabel ?? order.rejectionReason}
-                                {order.rejectionNote ? ` — ${order.rejectionNote}` : ''}
-                              </Text>
-                            )}
-                          </Stack>
-                        </TableCell>
-
-                        <TableCell>
-                          <Stack direction="vertical" gap={1} className="whitespace-nowrap">
-                            {assignedDriver ? (
+                        {isColumnVisible('items') && (
+                          <TableCell className="min-w-64 max-w-80">
+                            {itemsList.length > 0 ? (
                               <Stack direction="vertical" gap={0.5}>
-                                <Stack direction="horizontal" align="center" gap={1}>
-                                  <Truck className="w-3.5 h-3.5 text-accent shrink-0" />
-                                  <Text type="label" size="xsm">
-                                    {assignedDriver.name}
+                                {itemsList.slice(0, 3).map((item) => (
+                                  <Text
+                                    key={item.id}
+                                    type="body"
+                                    size="sm"
+                                    maxLines={2}
+                                  >
+                                    {item.rejectedQuantity && item.rejectedQuantity > 0
+                                      ? `• ${item.productName} (x${item.quantity}, trả ${item.rejectedQuantity})`
+                                      : `• ${item.productName} (x${item.quantity})`}
                                   </Text>
-                                </Stack>
-                                {assignedDriver.driverProfile?.licensePlate && (
-                                  <Text type="supporting" size="2xs">
-                                    {assignedDriver.driverProfile.vehicleType} •{' '}
-                                    {assignedDriver.driverProfile.licensePlate}
+                                ))}
+                                {itemsList.length > 3 && (
+                                  <Text type="supporting" size="xsm" maxLines={1}>
+                                    +{itemsList.length - 3} sản phẩm khác: {fullItemsSummary}
                                   </Text>
                                 )}
                               </Stack>
                             ) : (
-                              <Text type="supporting" size="xsm">
-                                Chưa gán
+                              <Text type="supporting" size="sm">
+                                —
                               </Text>
                             )}
+                          </TableCell>
+                        )}
 
-                            {canAssignRow && (
-                              <Button
-                                label={assignLabel}
-                                variant={assignedDriver ? 'secondary' : 'primary'}
-                                size="sm"
-                                icon={<UserPlus className="w-3.5 h-3.5" />}
-                                onClick={() => onOpenAssignDriver(order)}
-                              />
-                            )}
-                          </Stack>
-                        </TableCell>
-
-                        <TableCell>
-                          <div className="inline-flex items-center justify-end gap-1.5 whitespace-nowrap">
-                            {canRoleEditOrders(role) && isOrderEditable(order.status) && (
-                              <IconButton
-                                label={`Chỉnh sửa đơn ${order.orderCode}`}
-                                tooltip="Chỉnh sửa đơn hàng"
-                                variant="secondary"
-                                size="sm"
-                                icon={<Pencil className="w-3.5 h-3.5" />}
-                                onClick={() => onEditOrder(order)}
-                              />
-                            )}
-
-                            {order.status === 'NEW' && (
-                              <Button
-                                label="Bắt đầu nhặt hàng"
-                                variant="primary"
-                                size="sm"
-                                onClick={() => onStartPicking(order.id)}
-                              />
-                            )}
-
-                            {order.status === 'PICKING' && (
-                              <Button
-                                label="Đóng gói xong"
-                                variant="secondary"
-                                size="sm"
-                                onClick={() => onCompletePacking(order.id)}
-                              />
-                            )}
-
-                            {order.status === 'PACKED' && (
-                              <Text type="supporting" size="xsm">
-                                Sẵn sàng tạo chuyến
+                        {isColumnVisible('totalAmount') && (
+                          <TableCell className="min-w-32">
+                            <Stack direction="vertical" gap={0.5}>
+                              <Text type="label" size="sm" hasTabularNumbers>
+                                {formatVND(order.totalAmount)}
                               </Text>
-                            )}
+                              {getOrderRejectedAmount(order) > 0 && (
+                                <>
+                                  <Text
+                                    type="supporting"
+                                    size="xsm"
+                                    color="inherit"
+                                    className="text-error"
+                                    hasTabularNumbers
+                                  >
+                                    Trả lại: -{formatVND(getOrderRejectedAmount(order))}
+                                  </Text>
+                                  <Text type="label" size="xsm" color="accent" hasTabularNumbers>
+                                    Thực nhận: {formatVND(getOrderNetAmount(order))}
+                                  </Text>
+                                </>
+                              )}
+                            </Stack>
+                          </TableCell>
+                        )}
 
-                            {order.status === 'DELIVERING' && (
-                              <>
-                                <Button
-                                  label="Giao thành công"
-                                  variant="primary"
-                                  size="sm"
-                                  icon={<CheckCircle2 className="w-3.5 h-3.5" />}
-                                  onClick={() => onCompleteDelivery(order.id)}
+                        {isColumnVisible('payment') && (
+                          <TableCell className="min-w-44">
+                            <Stack direction="vertical" gap={1}>
+                              <Stack direction="horizontal" align="center" gap={1} wrap="wrap">
+                                <Badge
+                                  label={paymentMethodMeta.shortLabel}
+                                  variant={paymentMethodMeta.badgeVariant}
                                 />
-                                {canRoleUpdateStopDelivery(role) && (
+                                <Badge
+                                  label={paymentStatusMeta.shortLabel}
+                                  variant={paymentStatusMeta.badgeVariant}
+                                />
+                                {canRoleEditOrders(role) && (
                                   <IconButton
-                                    label={`Khách từ chối đơn ${order.orderCode}`}
-                                    tooltip="Khách từ chối nhận hàng"
-                                    variant="secondary"
+                                    label={`Cập nhật thanh toán đơn ${order.orderCode}`}
+                                    tooltip="Cập nhật trạng thái thanh toán"
+                                    variant="ghost"
                                     size="sm"
-                                    icon={<PackageX className="w-3.5 h-3.5" />}
-                                    onClick={() => onOpenRejectDelivery(order)}
+                                    icon={<CreditCard className="w-3.5 h-3.5" />}
+                                    onClick={() => openPaymentModal(order)}
                                   />
                                 )}
-                                <IconButton
-                                  label="Đánh dấu giao thất bại"
-                                  tooltip="Giao thất bại"
-                                  variant="destructive"
-                                  size="sm"
-                                  icon={<XCircle className="w-3.5 h-3.5" />}
-                                  onClick={() => onFailDelivery(order.id)}
+                              </Stack>
+                              {isOrderRefundPending(order) && (
+                                <Badge
+                                  label={`Cần hoàn tiền ${formatVND(getOrderRejectedAmount(order))}`}
+                                  variant="warning"
                                 />
-                              </>
-                            )}
+                              )}
+                              {order.paymentReference && (
+                                <Text type="supporting" size="xsm" maxLines={1}>
+                                  Mã GD: {order.paymentReference}
+                                </Text>
+                              )}
+                            </Stack>
+                          </TableCell>
+                        )}
 
-                            {(order.status === 'COMPLETED' ||
-                              order.status === 'PARTIALLY_REJECTED' ||
-                              order.status === 'REJECTED' ||
-                              order.status === 'FAILED') && (
-                              <Text type="supporting" size="xsm">
-                                Đã kết thúc
-                              </Text>
-                            )}
-                          </div>
-                        </TableCell>
+                        {isColumnVisible('status') && (
+                          <TableCell className="min-w-40">
+                            <Stack direction="vertical" gap={0.5}>
+                              <Badge
+                                label={statusMeta.label}
+                                variant={statusMeta.badgeVariant}
+                              />
+                              {isOrderRejectedStatus(order.status) && order.rejectionReason && (
+                                <Text type="supporting" size="xsm" maxLines={2}>
+                                  Lý do:{' '}
+                                  {REJECTION_REASON_CONFIG[order.rejectionReason]?.shortLabel ??
+                                    order.rejectionReason}
+                                  {order.rejectionNote ? ` — ${order.rejectionNote}` : ''}
+                                </Text>
+                              )}
+                            </Stack>
+                          </TableCell>
+                        )}
+
+                        {isColumnVisible('driver') && (
+                          <TableCell className="min-w-40">
+                            <Stack direction="vertical" gap={1}>
+                              {assignedDriver ? (
+                                <Stack direction="vertical" gap={0.5}>
+                                  <Text type="label" size="sm">
+                                    {assignedDriver.name}
+                                  </Text>
+                                  {assignedDriver.driverProfile?.licensePlate && (
+                                    <Text type="supporting" size="xsm">
+                                      {assignedDriver.driverProfile.vehicleType} •{' '}
+                                      {assignedDriver.driverProfile.licensePlate}
+                                    </Text>
+                                  )}
+                                </Stack>
+                              ) : (
+                                <Text type="supporting" size="sm">
+                                  Chưa gán
+                                </Text>
+                              )}
+
+                              {canAssignRow && (
+                                <Button
+                                  label={assignLabel}
+                                  variant={assignedDriver ? 'secondary' : 'primary'}
+                                  size="sm"
+                                  icon={<UserPlus className="w-3.5 h-3.5" />}
+                                  onClick={() => onOpenAssignDriver(order)}
+                                />
+                              )}
+                            </Stack>
+                          </TableCell>
+                        )}
+
+                        {isColumnVisible('actions') && (
+                          <TableCell className="min-w-40">
+                            <Stack direction="horizontal" align="center" gap={1.5} wrap="wrap">
+                              {canRoleEditOrders(role) && isOrderEditable(order.status) && (
+                                <IconButton
+                                  label={`Chỉnh sửa đơn ${order.orderCode}`}
+                                  tooltip="Chỉnh sửa đơn hàng"
+                                  variant="secondary"
+                                  size="sm"
+                                  icon={<Pencil className="w-3.5 h-3.5" />}
+                                  onClick={() => onEditOrder(order)}
+                                />
+                              )}
+
+                              {order.status === 'NEW' && (
+                                <Button
+                                  label="Bắt đầu nhặt"
+                                  variant="primary"
+                                  size="sm"
+                                  icon={<ShoppingBag className="w-3.5 h-3.5" />}
+                                  onClick={() => onStartPicking(order.id)}
+                                />
+                              )}
+
+                              {order.status === 'PICKING' && (
+                                <Button
+                                  label="Đóng gói xong"
+                                  variant="secondary"
+                                  size="sm"
+                                  icon={<PackageCheck className="w-3.5 h-3.5" />}
+                                  onClick={() => onCompletePacking(order.id)}
+                                />
+                              )}
+
+                              {order.status === 'PACKED' && (
+                                <Text type="supporting" size="sm">
+                                  Sẵn sàng tạo chuyến
+                                </Text>
+                              )}
+
+                              {order.status === 'DELIVERING' && (
+                                <>
+                                  <Button
+                                    label="Giao xong"
+                                    variant="primary"
+                                    size="sm"
+                                    icon={<CheckCircle2 className="w-3.5 h-3.5" />}
+                                    onClick={() => onCompleteDelivery(order.id)}
+                                  />
+                                  {canRoleUpdateStopDelivery(role) && (
+                                    <IconButton
+                                      label={`Khách từ chối đơn ${order.orderCode}`}
+                                      tooltip="Khách từ chối nhận hàng"
+                                      variant="secondary"
+                                      size="sm"
+                                      icon={<PackageX className="w-3.5 h-3.5" />}
+                                      onClick={() => onOpenRejectDelivery(order)}
+                                    />
+                                  )}
+                                  <IconButton
+                                    label="Đánh dấu giao thất bại"
+                                    tooltip="Giao thất bại"
+                                    variant="destructive"
+                                    size="sm"
+                                    icon={<XCircle className="w-3.5 h-3.5" />}
+                                    onClick={() => onFailDelivery(order.id)}
+                                  />
+                                </>
+                              )}
+
+                              {(order.status === 'COMPLETED' ||
+                                order.status === 'PARTIALLY_REJECTED' ||
+                                order.status === 'REJECTED' ||
+                                order.status === 'FAILED') && (
+                                <Text type="supporting" size="sm">
+                                  Đã kết thúc
+                                </Text>
+                              )}
+                            </Stack>
+                          </TableCell>
+                        )}
                       </TableRow>
                     );
                   })}

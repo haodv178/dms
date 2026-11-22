@@ -20,14 +20,14 @@ const DEV_DEMO_ACCOUNTS = [
   {
     role: 'WAREHOUSE',
     label: 'Kho',
-    email: 'kho@dms.vn',
+    email: 'linhdn@dms.vn',
     password: '123456',
     badgeVariant: 'orange' as const,
   },
   {
     role: 'DRIVER',
     label: 'Tài xế',
-    email: 'taixe@dms.vn',
+    email: 'luannv@dms.vn',
     password: '123456',
     badgeVariant: 'green' as const,
   },

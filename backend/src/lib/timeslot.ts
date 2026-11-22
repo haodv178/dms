@@ -98,3 +98,32 @@ export function formatTimeslotLabel(hour: number): string {
   const end = String(hour + 1).padStart(2, '0');
   return `${start}:00 - ${end}:00`;
 }
+
+export function formatDeliveryDateShort(dateStr: string): string {
+  const match = DATE_REGEX.exec(dateStr.trim());
+  if (!match) return dateStr;
+  return `${match[3]}/${match[2]}/${match[1]}`;
+}
+
+export function isDeliveryDateBeforeToday(
+  deliveryDate: string,
+  now: Date = new Date()
+): boolean {
+  const { deliveryDate: today } = getVietnamNowParts(now);
+  return deliveryDate < today;
+}
+
+export function validateDeliveryDateNotPast(
+  deliveryDate: string,
+  now: Date = new Date()
+): { ok: true } | { ok: false; today: string; error: string } {
+  const { deliveryDate: today } = getVietnamNowParts(now);
+  if (deliveryDate < today) {
+    return {
+      ok: false,
+      today,
+      error: `Ngày giao hàng (${formatDeliveryDateShort(deliveryDate)}) không được nhỏ hơn hôm nay (${formatDeliveryDateShort(today)}).`,
+    };
+  }
+  return { ok: true };
+}
