@@ -4,7 +4,17 @@ import { Button } from '@astryxdesign/core/Button';
 import { Card } from '@astryxdesign/core/Card';
 import { Heading } from '@astryxdesign/core/Heading';
 import { Text } from '@astryxdesign/core/Text';
-import { STATUS_CONFIG, type Order, type Store, type Trip } from '../types/dms';
+import {
+  PAYMENT_METHOD_CONFIG,
+  STATUS_CONFIG,
+  formatVND,
+  getOrderCodAmount,
+  isOrderPrepaid,
+  isOrderUnpaidOnline,
+  type Order,
+  type Store,
+  type Trip,
+} from '../types/dms';
 
 interface ActiveTripPanelProps {
   depot: Store;
@@ -120,6 +130,21 @@ export function ActiveTripPanel({
                       <Text type="supporting" size="2xs" maxLines={1}>
                         {stopOrder.customerAddress}
                       </Text>
+                      <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                        <Badge
+                          label={PAYMENT_METHOD_CONFIG[stopOrder.paymentMethod ?? 'COD'].shortLabel}
+                          variant={PAYMENT_METHOD_CONFIG[stopOrder.paymentMethod ?? 'COD'].badgeVariant}
+                        />
+                        {getOrderCodAmount(stopOrder) > 0 ? (
+                          <Text type="label" size="2xs" color="accent" hasTabularNumbers>
+                            Thu hộ COD: {formatVND(getOrderCodAmount(stopOrder))}
+                          </Text>
+                        ) : isOrderPrepaid(stopOrder) ? (
+                          <Badge label="Đã thanh toán (0₫ thu hộ)" variant="success" />
+                        ) : isOrderUnpaidOnline(stopOrder) ? (
+                          <Badge label="Chưa thanh toán" variant="warning" />
+                        ) : null}
+                      </div>
                     </div>
                   </div>
 

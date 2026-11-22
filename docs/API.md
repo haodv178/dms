@@ -66,16 +66,17 @@ Base URL local: `http://localhost:3000/api`
 
 | Method | Endpoint | Phân quyền | Mô tả |
 | :--- | :--- | :--- | :--- |
-| `GET` | `/api/orders` | `ADMIN`, `WAREHOUSE`, `DRIVER` | Danh sách đơn hàng sắp xếp `createdAt DESC` (tie-breaker `id DESC`), lọc `?status=NEW\|PICKING\|PACKED\|DELIVERING\|COMPLETED\|FAILED`. `DRIVER` chỉ thấy đơn của mình |
+| `GET` | `/api/orders` | `ADMIN`, `WAREHOUSE`, `DRIVER` | Danh sách đơn hàng sắp xếp `createdAt DESC` (tie-breaker `id DESC`), lọc `?status=NEW\|PICKING\|PACKED\|DELIVERING\|COMPLETED\|FAILED`, `?paymentMethod=COD\|CREDIT_CARD\|MOMO\|BANK_TRANSFER\|ZALOPAY\|VNPAY`, `?paymentStatus=UNPAID\|PAID\|REFUNDED`. `DRIVER` chỉ thấy đơn của mình |
 | `GET` | `/api/orders/:id` | `ADMIN`, `WAREHOUSE`, `DRIVER` | Chi tiết đơn hàng kèm `items` (có scoping cho `DRIVER`) |
-| `POST` | `/api/orders` | `ADMIN` | Tạo đơn mới (mặc định dùng depot `isDefault`). Chặn `400` nếu Haversine > 5 km hoặc thiếu tồn kho tại `DepotStock`; trừ tồn atomic trong transaction; tự tra cứu giá từ `Product` và tính `totalAmount` |
-| `PUT` | `/api/orders/:id` | `ADMIN` | Sửa đơn ở trạng thái `NEW` / `PICKING` / `PACKED` (trả `400` nếu đã `DELIVERING`/`COMPLETED`/`FAILED`). Hỗ trợ đổi depot, kiểm tra ≤ 5 km, hoàn tồn depot cũ & trừ tồn depot mới trong cùng transaction |
+| `POST` | `/api/orders` | `ADMIN` | Tạo đơn mới (mặc định dùng depot `isDefault`). Chặn `400` nếu Haversine > 5 km hoặc thiếu tồn kho tại `DepotStock`; trừ tồn atomic trong transaction; tự tra cứu giá từ `Product` và tính `totalAmount`. Hỗ trợ `paymentMethod` (mặc định `COD`), `paymentStatus` (`COD` ➔ `UNPAID`, online ➔ `PAID`), và `paymentReference` |
+| `PUT` | `/api/orders/:id` | `ADMIN` | Sửa đơn ở trạng thái `NEW` / `PICKING` / `PACKED` (trả `400` nếu đã `DELIVERING`/`COMPLETED`/`FAILED`). Hỗ trợ đổi depot, cập nhật `paymentMethod`/`paymentStatus`/`paymentReference`, kiểm tra ≤ 5 km, hoàn tồn depot cũ & trừ tồn depot mới trong cùng transaction |
+| `PATCH` | `/api/orders/:id/payment-status` | `ADMIN` | Cập nhật `paymentStatus` (`UNPAID` / `PAID` / `REFUNDED`) và `paymentReference` (tùy chọn) ở **mọi trạng thái đơn**; tự động đồng bộ `paidAt` |
 | `PATCH` | `/api/orders/:id/start-picking` | `ADMIN`, `WAREHOUSE` | Chuyển `NEW` ➔ `PICKING` |
 | `PATCH` | `/api/orders/:id/complete-packing` | `ADMIN`, `WAREHOUSE` | Chuyển `PICKING` ➔ `PACKED` |
 | `PATCH` | `/api/orders/:id/assign-driver` | `ADMIN` | Gán/đổi (`{ "driverId": 3 }`) hoặc bỏ gán (`{ "driverId": null }`) tài xế trực tiếp (chi tiết bên dưới) |
 | `POST` | `/api/orders/bulk-action` | `ADMIN`, `WAREHOUSE` | Thực hiện thao tác hàng loạt `{ action, orderIds, driverId? }` trong một transaction (chi tiết bên dưới) |
-| `PATCH` | `/api/orders/:id/complete-delivery` | `ADMIN`, `DRIVER` | Chuyển `DELIVERING` ➔ `COMPLETED`; tự đóng `Trip` (`COMPLETED`) và giải phóng tài xế về `AVAILABLE` khi hoàn tất đơn cuối |
-| `PATCH` | `/api/orders/:id/fail-delivery` | `ADMIN`, `DRIVER` | Chuyển `DELIVERING` ➔ `FAILED`; tự hoàn tồn kho về depot, đóng `Trip` và giải phóng tài xế nếu là đơn cuối |
+| `PATCH` | `/api/orders/:id/complete-delivery` | `ADMIN`, `DRIVER` | Chuyển `DELIVERING` ➔ `COMPLETED`; tự đánh dấu `paymentStatus = PAID` (và `paidAt`) cho đơn `COD` đang `UNPAID`; tự đóng `Trip` (`COMPLETED`) và giải phóng tài xế về `AVAILABLE` khi hoàn tất đơn cuối |
+| `PATCH` | `/api/orders/:id/fail-delivery` | `ADMIN`, `DRIVER` | Chuyển `DELIVERING` ➔ `FAILED`; tự hoàn tồn kho về depot, đóng `Trip` và giải phóng tài xế nếu là đơn cuối (giữ nguyên `paymentStatus` để Admin chủ động đánh dấu `REFUNDED` nếu cần) |
 
 **Chi tiết `PATCH /api/orders/:id/assign-driver`:**
 - **Gán / Đổi tài xế (`{ "driverId": 3 }`):** Hỗ trợ đơn `PACKED`, `DELIVERING`, `FAILED` (giao lại sẽ tự kiểm tra và trừ lại tồn kho tại depot). Yêu cầu tài xế đang `isActive`, không `OFFLINE`, và **thuộc đúng depot của đơn (`driverProfile.storeId === order.storeId`, trả `400` nếu lệch)**. Tự ghép vào chuyến đang hoạt động cùng depot ở cuối lộ trình (`max(deliverySequence) + 1`) hoặc tạo `Trip` mới, chuyển đơn sang `DELIVERING` và tài xế sang `ON_DELIVERY`.

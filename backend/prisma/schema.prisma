@@ -22,6 +22,21 @@ enum OrderStatus {
   FAILED
 }
 
+enum PaymentMethod {
+  COD
+  CREDIT_CARD
+  MOMO
+  BANK_TRANSFER
+  ZALOPAY
+  VNPAY
+}
+
+enum PaymentStatus {
+  UNPAID
+  PAID
+  REFUNDED
+}
+
 enum DriverStatus {
   AVAILABLE
   ON_DELIVERY
@@ -101,8 +116,12 @@ model Order {
   customerAddress  String
   latitude         Float       // Tọa độ GPS khách hàng
   longitude        Float
-  totalAmount      Decimal     @db.Decimal(10, 2)
-  status           OrderStatus @default(NEW)
+  totalAmount      Decimal       @db.Decimal(10, 2)
+  paymentMethod    PaymentMethod @default(COD)
+  paymentStatus    PaymentStatus @default(UNPAID)
+  paidAt           DateTime?
+  paymentReference String?
+  status           OrderStatus   @default(NEW)
   items            OrderItem[]
   tripId           Int?
   trip             Trip?       @relation(fields: [tripId], references: [id])

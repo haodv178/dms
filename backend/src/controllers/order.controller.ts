@@ -1,5 +1,12 @@
 import { Request, Response } from 'express';
-import { DriverStatus, OrderStatus, Prisma, Role } from '@prisma/client';
+import {
+  DriverStatus,
+  OrderStatus,
+  PaymentMethod,
+  PaymentStatus,
+  Prisma,
+  Role,
+} from '@prisma/client';
 import prisma from '../lib/prisma';
 import { checkDeliveryRadius, MAX_DELIVERY_DISTANCE_KM } from '../lib/geo';
 import {
@@ -7,6 +14,60 @@ import {
   deductDepotStock,
   restoreDepotStock,
 } from '../lib/inventory';
+
+const VALID_PAYMENT_METHODS = new Set<string>(Object.values(PaymentMethod));
+const VALID_PAYMENT_STATUSES = new Set<string>(Object.values(PaymentStatus));
+
+function parsePaymentMethod(raw: unknown): { value?: PaymentMethod; error?: string } {
+  if (raw === undefined || raw === null || raw === '') {
+    return { value: undefined };
+  }
+  const normalized = String(raw).trim().toUpperCase();
+  if (!VALID_PAYMENT_METHODS.has(normalized)) {
+    return {
+      error: `Phương thức thanh toán không hợp lệ: "${raw}". Hỗ trợ: ${Array.from(VALID_PAYMENT_METHODS).join(', ')}.`,
+    };
+  }
+  return { value: normalized as PaymentMethod };
+}
+
+function parsePaymentStatus(raw: unknown): { value?: PaymentStatus; error?: string } {
+  if (raw === undefined || raw === null || raw === '') {
+    return { value: undefined };
+  }
+  const normalized = String(raw).trim().toUpperCase();
+  if (!VALID_PAYMENT_STATUSES.has(normalized)) {
+    return {
+      error: `Trạng thái thanh toán không hợp lệ: "${raw}". Hỗ trợ: ${Array.from(VALID_PAYMENT_STATUSES).join(', ')}.`,
+    };
+  }
+  return { value: normalized as PaymentStatus };
+}
+
+function normalizePaymentReference(raw: unknown): string | null | undefined {
+  if (raw === undefined) return undefined;
+  if (raw === null) return null;
+  const trimmed = String(raw).trim();
+  return trimmed.length > 0 ? trimmed.slice(0, 120) : null;
+}
+
+function defaultPaymentStatusForMethod(method: PaymentMethod): PaymentStatus {
+  return method === PaymentMethod.COD ? PaymentStatus.UNPAID : PaymentStatus.PAID;
+}
+
+function resolvePaidAt(
+  nextStatus: PaymentStatus,
+  prevStatus?: PaymentStatus,
+  prevPaidAt?: Date | null
+): Date | null {
+  if (nextStatus === PaymentStatus.PAID) {
+    return prevStatus === PaymentStatus.PAID && prevPaidAt ? prevPaidAt : new Date();
+  }
+  if (nextStatus === PaymentStatus.REFUNDED) {
+    return prevPaidAt ?? null;
+  }
+  return null;
+}
 
 const EDITABLE_ORDER_STATUSES: OrderStatus[] = [
   OrderStatus.NEW,
@@ -158,10 +219,28 @@ async function resolveAndValidateItems(
 
 export const getOrders = async (req: Request, res: Response) => {
   try {
-    const { status } = req.query;
+    const { status, paymentMethod, paymentStatus } = req.query;
     const whereClause: Prisma.OrderWhereInput = {};
     if (status && status !== 'ALL') {
       whereClause.status = status as OrderStatus;
+    }
+    if (paymentMethod && paymentMethod !== 'ALL') {
+      const parsed = parsePaymentMethod(paymentMethod);
+      if (parsed.error) {
+        return res.status(400).json({ success: false, message: parsed.error });
+      }
+      if (parsed.value) {
+        whereClause.paymentMethod = parsed.value;
+      }
+    }
+    if (paymentStatus && paymentStatus !== 'ALL') {
+      const parsed = parsePaymentStatus(paymentStatus);
+      if (parsed.error) {
+        return res.status(400).json({ success: false, message: parsed.error });
+      }
+      if (parsed.value) {
+        whereClause.paymentStatus = parsed.value;
+      }
     }
     if (req.user?.role === Role.DRIVER) {
       whereClause.trip = { is: { driverId: req.user.id } };
@@ -210,8 +289,26 @@ export const createOrder = async (req: Request, res: Response) => {
       customerAddress,
       latitude,
       longitude,
+      paymentMethod,
+      paymentStatus,
+      paymentReference,
       items = [],
     } = req.body;
+
+    const parsedPaymentMethod = parsePaymentMethod(paymentMethod);
+    if (parsedPaymentMethod.error) {
+      return res.status(400).json({ success: false, message: parsedPaymentMethod.error });
+    }
+    const resolvedPaymentMethod = parsedPaymentMethod.value ?? PaymentMethod.COD;
+
+    const parsedPaymentStatus = parsePaymentStatus(paymentStatus);
+    if (parsedPaymentStatus.error) {
+      return res.status(400).json({ success: false, message: parsedPaymentStatus.error });
+    }
+    const resolvedPaymentStatus =
+      parsedPaymentStatus.value ?? defaultPaymentStatusForMethod(resolvedPaymentMethod);
+    const resolvedPaymentReference = normalizePaymentReference(paymentReference) ?? null;
+    const resolvedPaidAt = resolvePaidAt(resolvedPaymentStatus);
 
     if (!customerName || !customerAddress || latitude === undefined || longitude === undefined) {
       return res.status(400).json({
@@ -299,6 +396,10 @@ export const createOrder = async (req: Request, res: Response) => {
           latitude: parsedLat,
           longitude: parsedLng,
           totalAmount: computedTotal,
+          paymentMethod: resolvedPaymentMethod,
+          paymentStatus: resolvedPaymentStatus,
+          paidAt: resolvedPaidAt,
+          paymentReference: resolvedPaymentReference,
           status: OrderStatus.NEW,
           items: {
             create: normalizedItems,
@@ -355,8 +456,31 @@ export const updateOrder = async (req: Request, res: Response) => {
       customerAddress,
       latitude,
       longitude,
+      paymentMethod,
+      paymentStatus,
+      paymentReference,
       items,
     } = req.body;
+
+    const parsedPaymentMethod = parsePaymentMethod(paymentMethod);
+    if (parsedPaymentMethod.error) {
+      return res.status(400).json({ success: false, message: parsedPaymentMethod.error });
+    }
+    const resolvedPaymentMethod = parsedPaymentMethod.value ?? existingOrder.paymentMethod;
+
+    const parsedPaymentStatus = parsePaymentStatus(paymentStatus);
+    if (parsedPaymentStatus.error) {
+      return res.status(400).json({ success: false, message: parsedPaymentStatus.error });
+    }
+    const resolvedPaymentStatus = parsedPaymentStatus.value ?? existingOrder.paymentStatus;
+    const normalizedRef = normalizePaymentReference(paymentReference);
+    const resolvedPaymentReference =
+      normalizedRef !== undefined ? normalizedRef : existingOrder.paymentReference;
+    const resolvedPaidAt = resolvePaidAt(
+      resolvedPaymentStatus,
+      existingOrder.paymentStatus,
+      existingOrder.paidAt
+    );
 
     const trimmedName = typeof customerName === 'string' ? customerName.trim() : '';
     const trimmedAddress = typeof customerAddress === 'string' ? customerAddress.trim() : '';
@@ -445,6 +569,10 @@ export const updateOrder = async (req: Request, res: Response) => {
           latitude: parsedLat,
           longitude: parsedLng,
           totalAmount: computedTotal,
+          paymentMethod: resolvedPaymentMethod,
+          paymentStatus: resolvedPaymentStatus,
+          paidAt: resolvedPaidAt,
+          paymentReference: resolvedPaymentReference,
           items: {
             deleteMany: {},
             create: normalizedItems,
@@ -467,6 +595,65 @@ export const updateOrder = async (req: Request, res: Response) => {
         details: error.details,
       });
     }
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const updateOrderPaymentStatus = async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ success: false, message: 'ID đơn hàng không hợp lệ.' });
+    }
+
+    const { paymentStatus, paymentReference } = req.body ?? {};
+    const parsedPaymentStatus = parsePaymentStatus(paymentStatus);
+    if (parsedPaymentStatus.error || !parsedPaymentStatus.value) {
+      return res.status(400).json({
+        success: false,
+        message:
+          parsedPaymentStatus.error ||
+          'Vui lòng chọn trạng thái thanh toán (UNPAID, PAID hoặc REFUNDED).',
+      });
+    }
+
+    const existingOrder = await prisma.order.findUnique({ where: { id } });
+    if (!existingOrder) {
+      return res.status(404).json({ success: false, message: 'Không tìm thấy đơn hàng.' });
+    }
+
+    const nextPaymentStatus = parsedPaymentStatus.value;
+    const normalizedRef = normalizePaymentReference(paymentReference);
+    const nextPaymentReference =
+      normalizedRef !== undefined ? normalizedRef : existingOrder.paymentReference;
+    const nextPaidAt = resolvePaidAt(
+      nextPaymentStatus,
+      existingOrder.paymentStatus,
+      existingOrder.paidAt
+    );
+
+    const updatedOrder = await prisma.order.update({
+      where: { id },
+      data: {
+        paymentStatus: nextPaymentStatus,
+        paymentReference: nextPaymentReference,
+        paidAt: nextPaidAt,
+      },
+      include: ORDER_WITH_RELATIONS_INCLUDE,
+    });
+
+    const statusLabels: Record<PaymentStatus, string> = {
+      UNPAID: 'Chưa thanh toán',
+      PAID: 'Đã thanh toán',
+      REFUNDED: 'Đã hoàn tiền',
+    };
+
+    res.json({
+      success: true,
+      message: `Đã cập nhật thanh toán đơn ${updatedOrder.orderCode} → ${statusLabels[nextPaymentStatus]}.`,
+      data: updatedOrder,
+    });
+  } catch (error: any) {
     res.status(500).json({ success: false, message: error.message });
   }
 };
@@ -563,15 +750,33 @@ export const completeDelivery = async (req: Request, res: Response) => {
       });
     }
 
+    const shouldMarkCodPaid =
+      existing.paymentMethod === PaymentMethod.COD &&
+      existing.paymentStatus === PaymentStatus.UNPAID;
+
     const updatedOrder = await prisma.order.update({
       where: { id: orderId },
-      data: { status: OrderStatus.COMPLETED },
-      include: { items: true, store: true, trip: true },
+      data: {
+        status: OrderStatus.COMPLETED,
+        ...(shouldMarkCodPaid
+          ? {
+              paymentStatus: PaymentStatus.PAID,
+              paidAt: new Date(),
+            }
+          : {}),
+      },
+      include: ORDER_WITH_RELATIONS_INCLUDE,
     });
 
     await checkAndCompleteTrip(updatedOrder.tripId);
 
-    res.json({ success: true, message: 'Giao hàng thành công!', data: updatedOrder });
+    res.json({
+      success: true,
+      message: shouldMarkCodPaid
+        ? 'Giao hàng thành công và đã ghi nhận thu hộ COD!'
+        : 'Giao hàng thành công!',
+      data: updatedOrder,
+    });
   } catch (error: any) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -1186,6 +1391,19 @@ export const bulkOrderAction = async (req: Request, res: Response) => {
           where: { id: { in: eligibleIds } },
           data: { status: nextStatus },
         });
+        if (action === 'COMPLETE_DELIVERY') {
+          await tx.order.updateMany({
+            where: {
+              id: { in: eligibleIds },
+              paymentMethod: PaymentMethod.COD,
+              paymentStatus: PaymentStatus.UNPAID,
+            },
+            data: {
+              paymentStatus: PaymentStatus.PAID,
+              paidAt: new Date(),
+            },
+          });
+        }
 
         const affectedTripIds = Array.from(
           new Set(

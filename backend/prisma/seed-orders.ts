@@ -1,4 +1,4 @@
-import { OrderStatus, PrismaClient } from '@prisma/client';
+import { OrderStatus, PaymentMethod, PaymentStatus, PrismaClient } from '@prisma/client';
 import { checkDeliveryRadius, MAX_DELIVERY_DISTANCE_KM } from '../src/lib/geo';
 import { seedProducts } from '../src/lib/seeder';
 
@@ -954,6 +954,60 @@ function generatePhoneNumber(): string {
   return `${prefix}${suffix}`;
 }
 
+const WEIGHTED_PAYMENT_METHODS: PaymentMethod[] = [
+  PaymentMethod.COD,
+  PaymentMethod.COD,
+  PaymentMethod.COD,
+  PaymentMethod.COD,
+  PaymentMethod.MOMO,
+  PaymentMethod.MOMO,
+  PaymentMethod.CREDIT_CARD,
+  PaymentMethod.CREDIT_CARD,
+  PaymentMethod.BANK_TRANSFER,
+  PaymentMethod.VNPAY,
+  PaymentMethod.ZALOPAY,
+];
+
+function generatePaymentInfo(seq: number, batchSuffix: string): {
+  paymentMethod: PaymentMethod;
+  paymentStatus: PaymentStatus;
+  paidAt: Date | null;
+  paymentReference: string | null;
+} {
+  const paymentMethod = pickRandom(WEIGHTED_PAYMENT_METHODS);
+  if (paymentMethod === PaymentMethod.COD) {
+    return {
+      paymentMethod,
+      paymentStatus: PaymentStatus.UNPAID,
+      paidAt: null,
+      paymentReference: null,
+    };
+  }
+  const isPendingTransfer =
+    paymentMethod === PaymentMethod.BANK_TRANSFER && Math.random() < 0.3;
+  if (isPendingTransfer) {
+    return {
+      paymentMethod,
+      paymentStatus: PaymentStatus.UNPAID,
+      paidAt: null,
+      paymentReference: null,
+    };
+  }
+  const prefixMap: Record<Exclude<PaymentMethod, 'COD'>, string> = {
+    CREDIT_CARD: 'CC',
+    MOMO: 'MOMO',
+    BANK_TRANSFER: 'FT',
+    ZALOPAY: 'ZP',
+    VNPAY: 'VNP',
+  };
+  return {
+    paymentMethod,
+    paymentStatus: PaymentStatus.PAID,
+    paidAt: new Date(),
+    paymentReference: `${prefixMap[paymentMethod]}-${batchSuffix}-${String(seq).padStart(4, '0')}`,
+  };
+}
+
 function generateAddress(): string {
   const location = pickRandom(DISTRICT_LOCATIONS);
   const ward = pickRandom(location.wards);
@@ -1055,6 +1109,7 @@ async function main() {
       );
 
       const orderCode = `ORD-${batchSuffix}-${String(seq).padStart(4, '0')}`;
+      const paymentInfo = generatePaymentInfo(seq, batchSuffix);
 
       operations.push(
         prisma.order.create({
@@ -1067,6 +1122,10 @@ async function main() {
             latitude,
             longitude,
             totalAmount,
+            paymentMethod: paymentInfo.paymentMethod,
+            paymentStatus: paymentInfo.paymentStatus,
+            paidAt: paymentInfo.paidAt,
+            paymentReference: paymentInfo.paymentReference,
             status: OrderStatus.NEW,
             items: {
               create: orderItems,

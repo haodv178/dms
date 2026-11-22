@@ -11,9 +11,13 @@ import { Text } from '@astryxdesign/core/Text';
 import { TextInput } from '@astryxdesign/core/TextInput';
 import {
   MAX_DELIVERY_DISTANCE_KM,
+  PAYMENT_METHOD_CONFIG,
   formatDateTime,
   formatVND,
+  getOrderCodAmount,
   haversineDistanceKm,
+  isOrderPrepaid,
+  isOrderUnpaidOnline,
   type Driver,
   type Order,
   type Store,
@@ -205,7 +209,7 @@ export function CreateTripModal({
     const selectedSet = new Set(selectedOrderIds);
     return packedOrders
       .filter((o) => selectedSet.has(o.id))
-      .reduce((sum, o) => sum + Number(o.totalAmount || 0), 0);
+      .reduce((sum, o) => sum + getOrderCodAmount(o), 0);
   }, [packedOrders, selectedOrderIds]);
 
   const hasInvalidSelection = useMemo(
@@ -452,10 +456,21 @@ export function CreateTripModal({
                           </div>
                         </div>
 
-                        <div className="shrink-0 text-right">
+                        <div className="shrink-0 text-right flex flex-col items-end gap-1">
                           <Text type="label" size="xsm" hasTabularNumbers>
                             {formatVND(order.totalAmount)}
                           </Text>
+                          <div className="flex items-center gap-1 flex-wrap justify-end">
+                            <Badge
+                              label={PAYMENT_METHOD_CONFIG[order.paymentMethod ?? 'COD'].shortLabel}
+                              variant={PAYMENT_METHOD_CONFIG[order.paymentMethod ?? 'COD'].badgeVariant}
+                            />
+                            {isOrderPrepaid(order) ? (
+                              <Badge label="Đã TT (0₫)" variant="success" />
+                            ) : isOrderUnpaidOnline(order) ? (
+                              <Badge label="Chưa TT" variant="warning" />
+                            ) : null}
+                          </div>
                         </div>
                       </div>
                     );

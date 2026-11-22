@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Circle, MapContainer, Marker, TileLayer, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
-import { AlertTriangle, MapPin, Plus, Search, Trash2, Warehouse } from 'lucide-react';
+import { AlertTriangle, CreditCard, MapPin, Plus, Search, Trash2, Warehouse } from 'lucide-react';
 import { Badge } from '@astryxdesign/core/Badge';
 import { Button } from '@astryxdesign/core/Button';
 import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog';
@@ -21,12 +21,19 @@ import { TextInput } from '@astryxdesign/core/TextInput';
 import { fetchProducts } from '../api/dmsApi';
 import {
   MAX_DELIVERY_DISTANCE_KM,
+  PAYMENT_METHODS,
+  PAYMENT_METHOD_CONFIG,
+  PAYMENT_STATUSES,
+  PAYMENT_STATUS_CONFIG,
   STATUS_CONFIG,
   computeOrderFormTotal,
+  defaultPaymentStatusForMethod,
   formatVND,
   haversineDistanceKm,
   type Order,
   type OrderFormState,
+  type PaymentMethod,
+  type PaymentStatus,
   type Product,
   type Store,
 } from '../types/dms';
@@ -523,6 +530,87 @@ export function OrderFormModal({
                   value={form.customerAddress}
                   onChange={(val) => onFormChange({ ...form, customerAddress: val })}
                   placeholder="VD: 150 Nguyễn Lương Bằng, Quận 7, TP.HCM"
+                />
+              </div>
+
+              {/* Payment Info */}
+              <div className="p-3 rounded-xl border border-border bg-muted/40 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5">
+                    <CreditCard className="w-4 h-4 text-accent" />
+                    <Text type="label" size="sm">
+                      Thông tin thanh toán
+                    </Text>
+                  </div>
+                  <Badge
+                    label={
+                      form.paymentMethod === 'COD'
+                        ? form.paymentStatus === 'PAID'
+                          ? 'COD • Đã thu'
+                          : 'Tài xế thu hộ khi giao'
+                        : form.paymentStatus === 'PAID'
+                          ? 'Đã thanh toán (0₫ thu hộ)'
+                          : form.paymentStatus === 'REFUNDED'
+                            ? 'Đã hoàn tiền'
+                            : 'Chưa thanh toán online'
+                    }
+                    variant={PAYMENT_STATUS_CONFIG[form.paymentStatus].badgeVariant}
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <Selector
+                    label="Phương thức thanh toán"
+                    variant="secondary"
+                    size="sm"
+                    width="100%"
+                    options={PAYMENT_METHODS.map((method) => ({
+                      value: method,
+                      label: PAYMENT_METHOD_CONFIG[method].label,
+                    }))}
+                    value={form.paymentMethod}
+                    onChange={(val) => {
+                      const nextMethod = String(val) as PaymentMethod;
+                      const prevIsCod = form.paymentMethod === 'COD';
+                      const nextIsCod = nextMethod === 'COD';
+                      const nextStatus =
+                        prevIsCod !== nextIsCod
+                          ? defaultPaymentStatusForMethod(nextMethod)
+                          : form.paymentStatus;
+                      onFormChange({
+                        ...form,
+                        paymentMethod: nextMethod,
+                        paymentStatus: nextStatus,
+                      });
+                    }}
+                  />
+
+                  <Selector
+                    label="Trạng thái thanh toán"
+                    variant="secondary"
+                    size="sm"
+                    width="100%"
+                    options={PAYMENT_STATUSES.map((status) => ({
+                      value: status,
+                      label: PAYMENT_STATUS_CONFIG[status].label,
+                    }))}
+                    value={form.paymentStatus}
+                    onChange={(val) =>
+                      onFormChange({
+                        ...form,
+                        paymentStatus: String(val) as PaymentStatus,
+                      })
+                    }
+                  />
+                </div>
+
+                <TextInput
+                  label="Mã giao dịch (tùy chọn)"
+                  width="100%"
+                  size="sm"
+                  value={form.paymentReference}
+                  onChange={(val) => onFormChange({ ...form, paymentReference: val })}
+                  placeholder="VD: MOMO-20261122-001, FT261122..."
                 />
               </div>
 

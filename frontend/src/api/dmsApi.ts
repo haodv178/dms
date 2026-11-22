@@ -12,6 +12,7 @@ import {
   type ManagedUser,
   type Order,
   type OrderFormState,
+  type PaymentStatus,
   type PaginatedDriversResponse,
   type PaginatedProductsResponse,
   type PaginatedStoreInventoryResponse,
@@ -296,6 +297,9 @@ function serializeOrderPayload(form: OrderFormState, fallbackStoreId?: number) {
     latitude: Number(form.latitude),
     longitude: Number(form.longitude),
     totalAmount: computeOrderFormTotal(form.items),
+    paymentMethod: form.paymentMethod,
+    paymentStatus: form.paymentStatus,
+    paymentReference: form.paymentReference.trim() || null,
     items,
   };
 }
@@ -308,6 +312,21 @@ export async function createOrder(storeId: number, form: OrderFormState): Promis
 export async function updateOrder(orderId: number, form: OrderFormState): Promise<Order> {
   const res = await httpClient.put(`/orders/${orderId}`, serializeOrderPayload(form));
   return res.data.data as Order;
+}
+
+export async function updateOrderPaymentStatus(
+  orderId: number,
+  paymentStatus: PaymentStatus,
+  paymentReference?: string | null
+): Promise<{ order: Order; message: string }> {
+  const res = await httpClient.patch(`/orders/${orderId}/payment-status`, {
+    paymentStatus,
+    ...(paymentReference !== undefined ? { paymentReference } : {}),
+  });
+  return {
+    order: res.data.data as Order,
+    message: (res.data?.message as string) || 'Đã cập nhật trạng thái thanh toán!',
+  };
 }
 
 export interface FetchProductsParams {

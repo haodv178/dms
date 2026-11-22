@@ -10,6 +10,16 @@ export type OrderStatus =
   | 'COMPLETED'
   | 'FAILED';
 
+export type PaymentMethod =
+  | 'COD'
+  | 'CREDIT_CARD'
+  | 'MOMO'
+  | 'BANK_TRANSFER'
+  | 'ZALOPAY'
+  | 'VNPAY';
+
+export type PaymentStatus = 'UNPAID' | 'PAID' | 'REFUNDED';
+
 export type ThemeMode = 'light' | 'dark' | 'system';
 
 export type StatusBadgeVariant =
@@ -213,6 +223,10 @@ export interface Order {
   latitude: number;
   longitude: number;
   totalAmount: string | number;
+  paymentMethod: PaymentMethod;
+  paymentStatus: PaymentStatus;
+  paidAt?: string | null;
+  paymentReference?: string | null;
   status: OrderStatus;
   items: OrderItem[];
   tripId: number | null;
@@ -236,6 +250,9 @@ export interface OrderFormState {
   customerAddress: string;
   latitude: string;
   longitude: string;
+  paymentMethod: PaymentMethod;
+  paymentStatus: PaymentStatus;
+  paymentReference: string;
   items: OrderItemFormState[];
 }
 
@@ -345,6 +362,9 @@ export const INITIAL_ORDER_FORM: OrderFormState = {
   customerAddress: '',
   latitude: '10.7465',
   longitude: '106.7075',
+  paymentMethod: 'COD',
+  paymentStatus: 'UNPAID',
+  paymentReference: '',
   items: [],
 };
 
@@ -357,6 +377,9 @@ export function orderToFormState(order: Order, catalog: Product[] = []): OrderFo
     customerAddress: order.customerAddress,
     latitude: String(order.latitude),
     longitude: String(order.longitude),
+    paymentMethod: order.paymentMethod ?? 'COD',
+    paymentStatus: order.paymentStatus ?? 'UNPAID',
+    paymentReference: order.paymentReference ?? '',
     items: (order.items ?? []).map((item) => {
       const matched = byName.get(item.productName.toLowerCase());
       return {
@@ -368,6 +391,111 @@ export function orderToFormState(order: Order, catalog: Product[] = []): OrderFo
       };
     }),
   };
+}
+
+export const PAYMENT_METHODS: readonly PaymentMethod[] = [
+  'COD',
+  'CREDIT_CARD',
+  'MOMO',
+  'BANK_TRANSFER',
+  'ZALOPAY',
+  'VNPAY',
+] as const;
+
+export const PAYMENT_STATUSES: readonly PaymentStatus[] = [
+  'UNPAID',
+  'PAID',
+  'REFUNDED',
+] as const;
+
+export const PAYMENT_METHOD_CONFIG: Record<
+  PaymentMethod,
+  {
+    label: string;
+    shortLabel: string;
+    badgeVariant: StatusBadgeVariant;
+  }
+> = {
+  COD: {
+    label: 'COD (Tiền mặt khi giao)',
+    shortLabel: 'COD',
+    badgeVariant: 'orange',
+  },
+  CREDIT_CARD: {
+    label: 'Thẻ tín dụng / Ghi nợ (CC)',
+    shortLabel: 'Thẻ CC',
+    badgeVariant: 'blue',
+  },
+  MOMO: {
+    label: 'Ví MoMo',
+    shortLabel: 'MoMo',
+    badgeVariant: 'pink',
+  },
+  BANK_TRANSFER: {
+    label: 'Chuyển khoản ngân hàng',
+    shortLabel: 'Chuyển khoản',
+    badgeVariant: 'teal',
+  },
+  ZALOPAY: {
+    label: 'Ví ZaloPay',
+    shortLabel: 'ZaloPay',
+    badgeVariant: 'cyan',
+  },
+  VNPAY: {
+    label: 'VNPay QR',
+    shortLabel: 'VNPay',
+    badgeVariant: 'purple',
+  },
+};
+
+export const PAYMENT_STATUS_CONFIG: Record<
+  PaymentStatus,
+  {
+    label: string;
+    shortLabel: string;
+    badgeVariant: StatusBadgeVariant;
+  }
+> = {
+  UNPAID: {
+    label: 'Chưa thanh toán',
+    shortLabel: 'Chưa TT',
+    badgeVariant: 'warning',
+  },
+  PAID: {
+    label: 'Đã thanh toán',
+    shortLabel: 'Đã TT',
+    badgeVariant: 'success',
+  },
+  REFUNDED: {
+    label: 'Đã hoàn tiền',
+    shortLabel: 'Hoàn tiền',
+    badgeVariant: 'neutral',
+  },
+};
+
+export function defaultPaymentStatusForMethod(method: PaymentMethod): PaymentStatus {
+  return method === 'COD' ? 'UNPAID' : 'PAID';
+}
+
+export function getOrderCodAmount(order: Pick<Order, 'totalAmount' | 'paymentMethod' | 'paymentStatus'>): number {
+  const method = order.paymentMethod ?? 'COD';
+  const status = order.paymentStatus ?? 'UNPAID';
+  if (method === 'COD' && status === 'UNPAID') {
+    return Number(order.totalAmount) || 0;
+  }
+  return 0;
+}
+
+export function isOrderPrepaid(order: Pick<Order, 'paymentMethod' | 'paymentStatus'>): boolean {
+  const method = order.paymentMethod ?? 'COD';
+  const status = order.paymentStatus ?? 'UNPAID';
+  return method !== 'COD' && status === 'PAID';
+}
+
+export function isOrderUnpaidOnline(order: Pick<Order, 'paymentMethod' | 'paymentStatus'>): boolean {
+  const method = order.paymentMethod ?? 'COD';
+  const status = order.paymentStatus ?? 'UNPAID';
+  return method !== 'COD' && status === 'UNPAID';
 }
 
 export function computeOrderFormTotal(items: OrderItemFormState[]): number {

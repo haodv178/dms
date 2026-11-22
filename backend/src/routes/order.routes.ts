@@ -5,6 +5,7 @@ import {
   getOrderById,
   createOrder,
   updateOrder,
+  updateOrderPaymentStatus,
   startPicking,
   completePacking,
   completeDelivery,
@@ -23,6 +24,7 @@ router.post('/bulk-action', requireRole(Role.ADMIN, Role.WAREHOUSE), bulkOrderAc
 router.get('/:id', requireRole(Role.ADMIN, Role.WAREHOUSE, Role.DRIVER), getOrderById);
 router.post('/', requireRole(Role.ADMIN), createOrder);
 router.put('/:id', requireRole(Role.ADMIN), updateOrder);
+router.patch('/:id/payment-status', requireRole(Role.ADMIN), updateOrderPaymentStatus);
 router.patch('/:id/start-picking', requireRole(Role.ADMIN, Role.WAREHOUSE), startPicking);
 router.patch('/:id/complete-packing', requireRole(Role.ADMIN, Role.WAREHOUSE), completePacking);
 router.patch('/:id/complete-delivery', requireRole(Role.ADMIN, Role.DRIVER), completeDelivery);

@@ -12,6 +12,7 @@ import { TextInput } from '@astryxdesign/core/TextInput';
 import {
   DRIVER_STATUS_CONFIG,
   formatVND,
+  getOrderCodAmount,
   type Driver,
   type Order,
 } from '../types/dms';
@@ -108,7 +109,7 @@ export function BulkAssignDriverModal({
   const skippedByDepotCount = selectedDriver ? orders.length - matchingOrdersCount : 0;
 
   const totalCod = useMemo(
-    () => orders.reduce((sum, o) => sum + Number(o.totalAmount || 0), 0),
+    () => orders.reduce((sum, o) => sum + getOrderCodAmount(o), 0),
     [orders]
   );
 

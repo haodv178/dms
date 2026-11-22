@@ -6,7 +6,17 @@ import { Badge } from '@astryxdesign/core/Badge';
 import { Card } from '@astryxdesign/core/Card';
 import { Heading } from '@astryxdesign/core/Heading';
 import { Text } from '@astryxdesign/core/Text';
-import { STATUS_CONFIG, formatVND, type Order, type Store } from '../types/dms';
+import {
+  PAYMENT_METHOD_CONFIG,
+  PAYMENT_STATUS_CONFIG,
+  STATUS_CONFIG,
+  formatVND,
+  getOrderCodAmount,
+  isOrderPrepaid,
+  isOrderUnpaidOnline,
+  type Order,
+  type Store,
+} from '../types/dms';
 
 interface RouteMapProps {
   depot: Store;
@@ -177,10 +187,27 @@ export function RouteMap({
                       <strong>Địa chỉ:</strong> {order.customerAddress}
                     </div>
                     <div>
+                      <strong>Thanh toán:</strong>{' '}
+                      {PAYMENT_METHOD_CONFIG[order.paymentMethod ?? 'COD'].shortLabel} •{' '}
+                      {PAYMENT_STATUS_CONFIG[order.paymentStatus ?? 'UNPAID'].label}
+                    </div>
+                    <div>
                       <strong>Thu hộ (COD):</strong>{' '}
-                      <span className="font-bold text-success">
-                        {formatVND(order.totalAmount)}
-                      </span>
+                      {getOrderCodAmount(order) > 0 ? (
+                        <span className="font-bold text-success">
+                          {formatVND(getOrderCodAmount(order))}
+                        </span>
+                      ) : isOrderPrepaid(order) ? (
+                        <span className="font-semibold text-success">
+                          0₫ (Đã thanh toán)
+                        </span>
+                      ) : isOrderUnpaidOnline(order) ? (
+                        <span className="font-semibold text-warning">
+                          Chưa thanh toán ({formatVND(order.totalAmount)})
+                        </span>
+                      ) : (
+                        <span>0₫</span>
+                      )}
                     </div>
                     <div>
                       <strong>Trạng thái:</strong> {STATUS_CONFIG[order.status].label}

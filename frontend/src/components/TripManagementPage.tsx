@@ -28,6 +28,8 @@ import { CreateTripModal } from './CreateTripModal';
 import { ReassignTripDriverModal } from './ReassignTripDriverModal';
 import { RouteMap } from './RouteMap';
 import {
+  PAYMENT_METHOD_CONFIG,
+  PAYMENT_STATUS_CONFIG,
   STATUS_CONFIG,
   TRIP_STATUS_CONFIG,
   TRIP_STATUS_TABS,
@@ -37,6 +39,9 @@ import {
   canRoleUpdateStopDelivery,
   formatDateTime,
   formatVND,
+  getOrderCodAmount,
+  isOrderPrepaid,
+  isOrderUnpaidOnline,
   type Driver,
   type Order,
   type Role,
@@ -594,6 +599,13 @@ export function TripManagementPage({
 
                   {routedOrders.map((stopOrder, index) => {
                     const statusMeta = STATUS_CONFIG[stopOrder.status];
+                    const paymentMethodMeta =
+                      PAYMENT_METHOD_CONFIG[stopOrder.paymentMethod ?? 'COD'];
+                    const paymentStatusMeta =
+                      PAYMENT_STATUS_CONFIG[stopOrder.paymentStatus ?? 'UNPAID'];
+                    const codAmount = getOrderCodAmount(stopOrder);
+                    const prepaid = isOrderPrepaid(stopOrder);
+                    const unpaidOnline = isOrderUnpaidOnline(stopOrder);
                     return (
                       <div
                         key={stopOrder.id}
@@ -606,7 +618,7 @@ export function TripManagementPage({
                           >
                             {stopOrder.deliverySequence ?? index + 1}
                           </div>
-                          <div className="min-w-0 flex flex-col">
+                          <div className="min-w-0 flex flex-col gap-0.5">
                             <div className="flex items-center gap-1.5 flex-wrap">
                               <Text type="label" size="xsm">
                                 {stopOrder.orderCode}
@@ -624,9 +636,32 @@ export function TripManagementPage({
                             <Text type="supporting" size="2xs" maxLines={1}>
                               {stopOrder.customerAddress}
                             </Text>
-                            <Text type="label" size="2xs" color="accent" hasTabularNumbers>
-                              COD: {formatVND(stopOrder.totalAmount)}
-                            </Text>
+                            <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                              <Badge
+                                label={paymentMethodMeta.shortLabel}
+                                variant={paymentMethodMeta.badgeVariant}
+                              />
+                              {codAmount > 0 ? (
+                                <Text type="label" size="2xs" color="accent" hasTabularNumbers>
+                                  Thu hộ COD: {formatVND(codAmount)}
+                                </Text>
+                              ) : prepaid ? (
+                                <Badge
+                                  label="Đã thanh toán (0₫ thu hộ)"
+                                  variant="success"
+                                />
+                              ) : unpaidOnline ? (
+                                <Badge
+                                  label={`Chưa thanh toán (${formatVND(stopOrder.totalAmount)})`}
+                                  variant="warning"
+                                />
+                              ) : (
+                                <Badge
+                                  label={paymentStatusMeta.label}
+                                  variant={paymentStatusMeta.badgeVariant}
+                                />
+                              )}
+                            </div>
                           </div>
                         </div>
 

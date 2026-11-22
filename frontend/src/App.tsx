@@ -34,6 +34,7 @@ import {
   startTrip,
   updateDriver,
   updateOrder,
+  updateOrderPaymentStatus,
   updateProduct,
   updateStore,
   updateUser,
@@ -82,6 +83,7 @@ import {
   type ManagedUser,
   type Order,
   type OrderFormState,
+  type PaymentStatus,
   type Product,
   type ProductFormState,
   type ProductPagination,
@@ -225,6 +227,8 @@ function DmsDashboard({
   const [storeForm, setStoreForm] = useState<StoreFormState>(INITIAL_STORE_FORM);
   const [trips, setTrips] = useState<Trip[]>([]);
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
+  const [paymentMethodFilter, setPaymentMethodFilter] = useState<string>('ALL');
+  const [paymentStatusFilter, setPaymentStatusFilter] = useState<string>('ALL');
   const [orderSearch, setOrderSearch] = useState<string>('');
   const [selectedOrderIds, setSelectedOrderIds] = useState<number[]>([]);
   const [bulkActionLoading, setBulkActionLoading] = useState<boolean>(false);
@@ -915,21 +919,47 @@ function DmsDashboard({
     [sortedOrders]
   );
 
+  const handleUpdateOrderPaymentStatus = async (
+    orderId: number,
+    paymentStatus: PaymentStatus,
+    paymentReference?: string | null
+  ) => {
+    try {
+      const result = await updateOrderPaymentStatus(
+        orderId,
+        paymentStatus,
+        paymentReference
+      );
+      notify(result.message);
+      await loadAllData();
+    } catch (err) {
+      notify(getErrorMessage(err), 'error');
+      throw err;
+    }
+  };
+
   const filteredOrders = useMemo(() => {
     const q = orderSearch.trim().toLowerCase();
     return sortedOrders.filter((o) => {
       if (statusFilter !== 'ALL' && o.status !== statusFilter) return false;
+      if (paymentMethodFilter !== 'ALL' && (o.paymentMethod ?? 'COD') !== paymentMethodFilter) {
+        return false;
+      }
+      if (paymentStatusFilter !== 'ALL' && (o.paymentStatus ?? 'UNPAID') !== paymentStatusFilter) {
+        return false;
+      }
       if (!q) return true;
       return (
         o.orderCode.toLowerCase().includes(q) ||
         o.customerName.toLowerCase().includes(q) ||
         o.customerPhone.toLowerCase().includes(q) ||
         o.customerAddress.toLowerCase().includes(q) ||
+        (o.paymentReference?.toLowerCase().includes(q) ?? false) ||
         (o.trip?.tripCode?.toLowerCase().includes(q) ?? false) ||
         (o.trip?.driver?.name?.toLowerCase().includes(q) ?? false)
       );
     });
-  }, [sortedOrders, statusFilter, orderSearch]);
+  }, [sortedOrders, statusFilter, paymentMethodFilter, paymentStatusFilter, orderSearch]);
 
   const counts = useMemo(() => {
     const map: Record<string, number> = {
@@ -1420,6 +1450,10 @@ function DmsDashboard({
             counts={counts}
             statusFilter={statusFilter}
             onStatusFilterChange={handleStatusFilterChange}
+            paymentMethodFilter={paymentMethodFilter}
+            onPaymentMethodFilterChange={setPaymentMethodFilter}
+            paymentStatusFilter={paymentStatusFilter}
+            onPaymentStatusFilterChange={setPaymentStatusFilter}
             searchQuery={orderSearch}
             onSearchQueryChange={setOrderSearch}
             selectedOrderIds={selectedOrderIds}
@@ -1431,6 +1465,7 @@ function DmsDashboard({
             onOpenBulkAssignDriver={handleOpenBulkAssignDriver}
             onOpenBulkCreateTrip={handleOpenBulkCreateTrip}
             onEditOrder={handleOpenEditOrder}
+            onUpdatePaymentStatus={handleUpdateOrderPaymentStatus}
             onOpenAssignDriver={handleOpenAssignDriver}
             onStartPicking={handleStartPicking}
             onCompletePacking={handleCompletePacking}
