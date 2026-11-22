@@ -66,6 +66,7 @@ import {
   INITIAL_USER_FORM,
   MAX_DELIVERY_DISTANCE_KM,
   canRoleAccessPage,
+  createInitialOrderForm,
   createInitialProductForm,
   driverToFormState,
   haversineDistanceKm,
@@ -229,6 +230,8 @@ function DmsDashboard({
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [paymentMethodFilter, setPaymentMethodFilter] = useState<string>('ALL');
   const [paymentStatusFilter, setPaymentStatusFilter] = useState<string>('ALL');
+  const [deliveryDateFilter, setDeliveryDateFilter] = useState<string>('');
+  const [hourDeliveryFilter, setHourDeliveryFilter] = useState<string>('ALL');
   const [orderSearch, setOrderSearch] = useState<string>('');
   const [selectedOrderIds, setSelectedOrderIds] = useState<number[]>([]);
   const [bulkActionLoading, setBulkActionLoading] = useState<boolean>(false);
@@ -812,8 +815,7 @@ function DmsDashboard({
     setOrderModalMode('create');
     setEditingOrder(null);
     setOrderForm({
-      ...INITIAL_ORDER_FORM,
-      storeId: String(depot.id),
+      ...createInitialOrderForm(String(depot.id)),
       latitude: (depot.latitude + 0.004).toFixed(5),
       longitude: (depot.longitude + 0.005).toFixed(5),
     });
@@ -948,6 +950,12 @@ function DmsDashboard({
       if (paymentStatusFilter !== 'ALL' && (o.paymentStatus ?? 'UNPAID') !== paymentStatusFilter) {
         return false;
       }
+      if (deliveryDateFilter && o.deliveryDate !== deliveryDateFilter) {
+        return false;
+      }
+      if (hourDeliveryFilter !== 'ALL' && String(o.hourDelivery) !== hourDeliveryFilter) {
+        return false;
+      }
       if (!q) return true;
       return (
         o.orderCode.toLowerCase().includes(q) ||
@@ -959,7 +967,15 @@ function DmsDashboard({
         (o.trip?.driver?.name?.toLowerCase().includes(q) ?? false)
       );
     });
-  }, [sortedOrders, statusFilter, paymentMethodFilter, paymentStatusFilter, orderSearch]);
+  }, [
+    sortedOrders,
+    statusFilter,
+    paymentMethodFilter,
+    paymentStatusFilter,
+    deliveryDateFilter,
+    hourDeliveryFilter,
+    orderSearch,
+  ]);
 
   const counts = useMemo(() => {
     const map: Record<string, number> = {
@@ -1454,6 +1470,10 @@ function DmsDashboard({
             onPaymentMethodFilterChange={setPaymentMethodFilter}
             paymentStatusFilter={paymentStatusFilter}
             onPaymentStatusFilterChange={setPaymentStatusFilter}
+            deliveryDateFilter={deliveryDateFilter}
+            onDeliveryDateFilterChange={setDeliveryDateFilter}
+            hourDeliveryFilter={hourDeliveryFilter}
+            onHourDeliveryFilterChange={setHourDeliveryFilter}
             searchQuery={orderSearch}
             onSearchQueryChange={setOrderSearch}
             selectedOrderIds={selectedOrderIds}
@@ -1684,7 +1704,7 @@ function DmsDashboard({
           }
         }}
         packedOrders={packedOrders}
-        availableDrivers={availableDrivers}
+        availableDrivers={assignableDrivers.length > 0 ? assignableDrivers : availableDrivers}
         stores={allStores}
         defaultDepot={depot}
         submitting={optimizing}

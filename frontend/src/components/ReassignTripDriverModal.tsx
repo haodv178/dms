@@ -6,7 +6,14 @@ import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog';
 import { Layout, LayoutContent, LayoutFooter } from '@astryxdesign/core/Layout';
 import { Text } from '@astryxdesign/core/Text';
 import { TextInput } from '@astryxdesign/core/TextInput';
-import { DRIVER_STATUS_CONFIG, type Driver, type Trip } from '../types/dms';
+import {
+  DRIVER_STATUS_CONFIG,
+  findDriverSlotConflict,
+  formatDeliveryDateShort,
+  formatTimeslot,
+  type Driver,
+  type Trip,
+} from '../types/dms';
 
 interface ReassignTripDriverModalProps {
   isOpen: boolean;
@@ -53,13 +60,30 @@ export function ReassignTripDriverModal({
         );
       })
       .sort((a, b) => {
+        const aConflict = trip
+          ? Boolean(findDriverSlotConflict(a, trip.deliveryDate, trip.hourDelivery, trip.id))
+          : false;
+        const bConflict = trip
+          ? Boolean(findDriverSlotConflict(b, trip.deliveryDate, trip.hourDelivery, trip.id))
+          : false;
+        if (aConflict !== bConflict) return aConflict ? 1 : -1;
         if (a.status !== b.status) return a.status === 'AVAILABLE' ? -1 : 1;
         return a.name.localeCompare(b.name, 'vi');
       });
-  }, [drivers, search, trip?.storeId]);
+  }, [drivers, search, trip]);
+
+  const selectedDriverConflict = useMemo(() => {
+    if (!trip || selectedDriverId === null) return null;
+    const driver = drivers.find((d) => d.id === selectedDriverId);
+    if (!driver) return null;
+    return findDriverSlotConflict(driver, trip.deliveryDate, trip.hourDelivery, trip.id);
+  }, [drivers, selectedDriverId, trip]);
 
   const canConfirm = Boolean(
-    trip && selectedDriverId !== null && selectedDriverId !== currentDriverId
+    trip &&
+      selectedDriverId !== null &&
+      selectedDriverId !== currentDriverId &&
+      !selectedDriverConflict
   );
 
   return (
@@ -75,8 +99,8 @@ export function ReassignTripDriverModal({
           <DialogHeader
             title={trip ? `Đổi Tài Xế Chuyến ${trip.tripCode}` : 'Đổi Tài Xế Chuyến Xe'}
             subtitle={
-              trip?.store?.name
-                ? `Chỉ hiển thị tài xế đang hoạt động thuộc depot "${trip.store.name}"`
+              trip
+                ? `Depot "${trip.store?.name ?? `#${trip.storeId}`}" • ${formatDeliveryDateShort(trip.deliveryDate)} • Khung ${formatTimeslot(trip.hourDelivery)}`
                 : 'Chọn một tài xế đang hoạt động cùng depot để chuyển toàn bộ chuyến xe này'
             }
             onOpenChange={onOpenChange}
@@ -108,16 +132,26 @@ export function ReassignTripDriverModal({
                   const isSelected = selectedDriverId === driver.id;
                   const isCurrent = currentDriverId === driver.id;
                   const statusMeta = DRIVER_STATUS_CONFIG[driver.status];
+                  const slotConflict = trip
+                    ? findDriverSlotConflict(driver, trip.deliveryDate, trip.hourDelivery, trip.id)
+                    : null;
 
                   return (
                     <button
                       key={driver.id}
                       type="button"
-                      onClick={() => setSelectedDriverId(driver.id)}
+                      disabled={Boolean(slotConflict)}
+                      onClick={() => {
+                        if (!slotConflict) {
+                          setSelectedDriverId(driver.id);
+                        }
+                      }}
                       className={`w-full text-left p-3 rounded-xl border transition-colors flex items-center justify-between gap-3 ${
-                        isSelected
-                          ? 'border-accent bg-accent-muted/30'
-                          : 'border-border bg-surface hover:bg-muted'
+                        slotConflict
+                          ? 'border-border bg-muted/60 opacity-60 cursor-not-allowed'
+                          : isSelected
+                            ? 'border-accent bg-accent-muted/30'
+                            : 'border-border bg-surface hover:bg-muted'
                       }`}
                     >
                       <div className="flex items-center gap-2.5 min-w-0">
@@ -132,6 +166,12 @@ export function ReassignTripDriverModal({
                             {isCurrent && (
                               <Badge label="Hiện tại" variant="neutral" />
                             )}
+                            {slotConflict && (
+                              <Badge
+                                label={`Trùng khung giờ (${slotConflict.tripCode})`}
+                                variant="error"
+                              />
+                            )}
                           </div>
                           <Text type="supporting" size="2xs">
                             {driver.phone} • {driver.vehicleType} ({driver.licensePlate})
@@ -144,7 +184,9 @@ export function ReassignTripDriverModal({
                           label={statusMeta.shortLabel}
                           variant={statusMeta.badgeVariant}
                         />
-                        {isSelected && <Check className="w-4 h-4 text-accent" />}
+                        {isSelected && !slotConflict && (
+                          <Check className="w-4 h-4 text-accent" />
+                        )}
                       </div>
                     </button>
                   );

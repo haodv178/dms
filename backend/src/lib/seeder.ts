@@ -1,5 +1,6 @@
 import { PrismaClient, Role, OrderStatus, DriverStatus } from '@prisma/client';
 import { DEFAULT_DEMO_PASSWORD, hashPassword } from './auth';
+import { DELIVERY_HOURS, getVietnamNowParts } from './timeslot';
 
 const SAMPLE_DRIVERS = [
   {
@@ -376,14 +377,19 @@ export async function runSeed(prisma: PrismaClient, resetOrders = true) {
     seededProducts.map((p) => [p.name.toLowerCase(), p])
   );
 
+  const { deliveryDate: todayDeliveryDate } = getVietnamNowParts();
   const createdOrders = [];
-  for (const ord of sampleOrders) {
+  for (let idx = 0; idx < sampleOrders.length; idx++) {
+    const ord = sampleOrders[idx];
+    const hourDelivery = DELIVERY_HOURS[idx % DELIVERY_HOURS.length];
     const order = await prisma.order.upsert({
       where: { orderCode: ord.code },
       update: {
         status: OrderStatus.NEW,
         tripId: null,
         deliverySequence: null,
+        deliveryDate: todayDeliveryDate,
+        hourDelivery,
       },
       create: {
         orderCode: ord.code,
@@ -394,6 +400,8 @@ export async function runSeed(prisma: PrismaClient, resetOrders = true) {
         latitude: ord.lat,
         longitude: ord.lng,
         totalAmount: ord.amount,
+        deliveryDate: todayDeliveryDate,
+        hourDelivery,
         status: OrderStatus.NEW,
         items: {
           create: ord.items.map((item) => {

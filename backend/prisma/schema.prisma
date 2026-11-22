@@ -126,8 +126,12 @@ model Order {
   tripId           Int?
   trip             Trip?       @relation(fields: [tripId], references: [id])
   deliverySequence Int?        // Thứ tự dừng xe do OR-Tools tối ưu (1, 2, 3...)
+  deliveryDate     String      @default("2026-01-01") // YYYY-MM-DD (Asia/Ho_Chi_Minh)
+  hourDelivery     Int         @default(9)            // 9..19 (11 khung giờ giao/ngày)
   createdAt        DateTime    @default(now())
   updatedAt        DateTime    @updatedAt
+
+  @@index([deliveryDate, hourDelivery])
 }
 
 model OrderItem {
@@ -151,7 +155,12 @@ model Trip {
   orders        Order[]
   status        String   @default("ASSIGNED") // ASSIGNED | IN_TRANSIT | COMPLETED
   totalDistance Float?   // Mét hoặc km
+  deliveryDate  String   @default("2026-01-01") // YYYY-MM-DD (Asia/Ho_Chi_Minh)
+  hourDelivery  Int      @default(9)            // 9..19 (tất cả đơn trong chuyến cùng khung giờ)
   createdAt     DateTime @default(now())
+
+  @@index([deliveryDate, hourDelivery])
+  @@index([driverId, deliveryDate, hourDelivery, status])
 }
 
 model Product {

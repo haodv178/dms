@@ -23,6 +23,7 @@ import { Badge } from '@astryxdesign/core/Badge';
 import { Button } from '@astryxdesign/core/Button';
 import { Card } from '@astryxdesign/core/Card';
 import { CheckboxInput } from '@astryxdesign/core/CheckboxInput';
+import { DateInput } from '@astryxdesign/core/DateInput';
 import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog';
 import { Heading } from '@astryxdesign/core/Heading';
 import { IconButton } from '@astryxdesign/core/IconButton';
@@ -41,6 +42,7 @@ import {
 import { Text } from '@astryxdesign/core/Text';
 import { TextInput } from '@astryxdesign/core/TextInput';
 import {
+  DELIVERY_HOURS,
   PAYMENT_METHODS,
   PAYMENT_METHOD_CONFIG,
   PAYMENT_STATUSES,
@@ -53,9 +55,12 @@ import {
   canRolePickAndPack,
   canRoleUpdateStopDelivery,
   formatDateTime,
+  formatDeliveryDateShort,
+  formatTimeslot,
   formatVND,
   isOrderAssignable,
   isOrderEditable,
+  toIsoDateString,
   type BulkOrderActionType,
   type Order,
   type PaymentStatus,
@@ -80,6 +85,10 @@ interface OrderTableProps {
   onPaymentMethodFilterChange: (method: string) => void;
   paymentStatusFilter: string;
   onPaymentStatusFilterChange: (status: string) => void;
+  deliveryDateFilter: string;
+  onDeliveryDateFilterChange: (date: string) => void;
+  hourDeliveryFilter: string;
+  onHourDeliveryFilterChange: (hour: string) => void;
   searchQuery: string;
   onSearchQueryChange: (query: string) => void;
   selectedOrderIds: number[];
@@ -122,6 +131,10 @@ export function OrderTable({
   onPaymentMethodFilterChange,
   paymentStatusFilter,
   onPaymentStatusFilterChange,
+  deliveryDateFilter,
+  onDeliveryDateFilterChange,
+  hourDeliveryFilter,
+  onHourDeliveryFilterChange,
   searchQuery,
   onSearchQueryChange,
   selectedOrderIds,
@@ -308,6 +321,38 @@ export function OrderTable({
                 onChange={onSearchQueryChange}
                 startIcon={<Search className="w-4 h-4" />}
                 size="sm"
+              />
+            </div>
+
+            <DateInput
+              label="Ngày giao hàng"
+              isLabelHidden
+              size="sm"
+              width={185}
+              format="system_date"
+              hasClear
+              placeholder="Tất cả ngày giao"
+              value={toIsoDateString(deliveryDateFilter)}
+              onChange={(val) => onDeliveryDateFilterChange(val ?? '')}
+            />
+
+            <div className="w-44">
+              <Selector
+                label="Khung giờ giao"
+                isLabelHidden
+                variant="secondary"
+                size="sm"
+                width="100%"
+                startIcon={<Clock className="w-3.5 h-3.5" />}
+                options={[
+                  { value: 'ALL', label: 'Tất cả khung giờ' },
+                  ...DELIVERY_HOURS.map((hour) => ({
+                    value: String(hour),
+                    label: formatTimeslot(hour),
+                  })),
+                ]}
+                value={hourDeliveryFilter}
+                onChange={(val) => onHourDeliveryFilterChange(String(val))}
               />
             </div>
 
@@ -550,6 +595,7 @@ export function OrderTable({
                       />
                     </TableHeaderCell>
                     <TableHeaderCell>Mã Đơn / Chuyến</TableHeaderCell>
+                    <TableHeaderCell>Khung Giờ Giao</TableHeaderCell>
                     <TableHeaderCell>Ngày Tạo</TableHeaderCell>
                     <TableHeaderCell>Khách Hàng &amp; Địa Chỉ</TableHeaderCell>
                     <TableHeaderCell>Tổng Tiền</TableHeaderCell>
@@ -611,6 +657,19 @@ export function OrderTable({
                                 </Text>
                               )}
                             </div>
+                          </div>
+                        </TableCell>
+
+                        <TableCell>
+                          <div className="flex flex-col gap-1 whitespace-nowrap">
+                            <Badge
+                              label={formatTimeslot(order.hourDelivery)}
+                              variant="blue"
+                              icon={<Clock className="w-3 h-3" />}
+                            />
+                            <Text type="supporting" size="2xs" hasTabularNumbers>
+                              {formatDeliveryDateShort(order.deliveryDate)}
+                            </Text>
                           </div>
                         </TableCell>
 

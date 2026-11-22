@@ -26,12 +26,17 @@ const DRIVER_INCLUDE = {
   },
   trips: {
     where: { status: { in: ['ASSIGNED', 'IN_TRANSIT'] } },
-    orderBy: { createdAt: 'desc' as const },
-    take: 1,
+    orderBy: [
+      { deliveryDate: 'asc' as const },
+      { hourDelivery: 'asc' as const },
+      { createdAt: 'desc' as const },
+    ],
     select: {
       id: true,
       tripCode: true,
       status: true,
+      deliveryDate: true,
+      hourDelivery: true,
       _count: {
         select: { orders: true },
       },
@@ -47,7 +52,15 @@ type DriverWithRelations = Prisma.UserGetPayload<{
 }>;
 
 function serializeDriver(user: DriverWithRelations) {
-  const activeTrip = user.trips[0] ?? null;
+  const activeTrips = user.trips.map((t) => ({
+    id: t.id,
+    tripCode: t.tripCode,
+    status: t.status,
+    deliveryDate: t.deliveryDate,
+    hourDelivery: t.hourDelivery,
+    ordersCount: t._count.orders,
+  }));
+  const activeTrip = activeTrips[0] ?? null;
   const store = user.driverProfile?.store ?? null;
   return {
     id: user.id,
@@ -70,14 +83,8 @@ function serializeDriver(user: DriverWithRelations) {
     status: user.driverProfile?.status ?? DriverStatus.AVAILABLE,
     isActive: user.driverProfile?.isActive ?? true,
     notes: user.driverProfile?.notes ?? '',
-    activeTrip: activeTrip
-      ? {
-          id: activeTrip.id,
-          tripCode: activeTrip.tripCode,
-          status: activeTrip.status,
-          ordersCount: activeTrip._count.orders,
-        }
-      : null,
+    activeTrip,
+    activeTrips,
     totalTrips: user._count.trips,
     createdAt: user.createdAt,
     updatedAt: user.driverProfile?.updatedAt ?? user.createdAt,

@@ -300,6 +300,8 @@ function serializeOrderPayload(form: OrderFormState, fallbackStoreId?: number) {
     paymentMethod: form.paymentMethod,
     paymentStatus: form.paymentStatus,
     paymentReference: form.paymentReference.trim() || null,
+    deliveryDate: form.deliveryDate,
+    hourDelivery: Number(form.hourDelivery),
     items,
   };
 }

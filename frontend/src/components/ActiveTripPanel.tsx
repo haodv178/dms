@@ -7,6 +7,8 @@ import { Text } from '@astryxdesign/core/Text';
 import {
   PAYMENT_METHOD_CONFIG,
   STATUS_CONFIG,
+  formatDeliveryDateShort,
+  formatTimeslot,
   formatVND,
   getOrderCodAmount,
   isOrderPrepaid,
@@ -57,10 +59,17 @@ export function ActiveTripPanel({
                   ? `${(activeTrip.totalDistance / 1000).toFixed(2)} km (${activeTrip.totalDistance} m)`
                   : 'N/A'}
               </Text>
-              <Badge
-                label={activeTrip.status}
-                variant={activeTrip.status === 'COMPLETED' ? 'green' : 'blue'}
-              />
+              <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                <Badge
+                  label={`${formatDeliveryDateShort(activeTrip.deliveryDate)} • ${formatTimeslot(activeTrip.hourDelivery)}`}
+                  variant="purple"
+                  icon={<Clock className="w-3 h-3" />}
+                />
+                <Badge
+                  label={activeTrip.status}
+                  variant={activeTrip.status === 'COMPLETED' ? 'green' : 'blue'}
+                />
+              </div>
             </div>
           )}
         </div>

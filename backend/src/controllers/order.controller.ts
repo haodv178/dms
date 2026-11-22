@@ -14,6 +14,11 @@ import {
   deductDepotStock,
   restoreDepotStock,
 } from '../lib/inventory';
+import {
+  getDefaultDeliverySlot,
+  parseDeliveryDate,
+  parseHourDelivery,
+} from '../lib/timeslot';
 
 const VALID_PAYMENT_METHODS = new Set<string>(Object.values(PaymentMethod));
 const VALID_PAYMENT_STATUSES = new Set<string>(Object.values(PaymentStatus));
@@ -219,7 +224,7 @@ async function resolveAndValidateItems(
 
 export const getOrders = async (req: Request, res: Response) => {
   try {
-    const { status, paymentMethod, paymentStatus } = req.query;
+    const { status, paymentMethod, paymentStatus, deliveryDate, hourDelivery } = req.query;
     const whereClause: Prisma.OrderWhereInput = {};
     if (status && status !== 'ALL') {
       whereClause.status = status as OrderStatus;
@@ -240,6 +245,24 @@ export const getOrders = async (req: Request, res: Response) => {
       }
       if (parsed.value) {
         whereClause.paymentStatus = parsed.value;
+      }
+    }
+    if (deliveryDate && deliveryDate !== 'ALL') {
+      const parsed = parseDeliveryDate(deliveryDate);
+      if (parsed.error) {
+        return res.status(400).json({ success: false, message: parsed.error });
+      }
+      if (parsed.value) {
+        whereClause.deliveryDate = parsed.value;
+      }
+    }
+    if (hourDelivery && hourDelivery !== 'ALL') {
+      const parsed = parseHourDelivery(hourDelivery);
+      if (parsed.error) {
+        return res.status(400).json({ success: false, message: parsed.error });
+      }
+      if (parsed.value !== undefined) {
+        whereClause.hourDelivery = parsed.value;
       }
     }
     if (req.user?.role === Role.DRIVER) {
@@ -292,8 +315,23 @@ export const createOrder = async (req: Request, res: Response) => {
       paymentMethod,
       paymentStatus,
       paymentReference,
+      deliveryDate,
+      hourDelivery,
       items = [],
     } = req.body;
+
+    const defaultSlot = getDefaultDeliverySlot();
+    const parsedDeliveryDate = parseDeliveryDate(deliveryDate);
+    if (parsedDeliveryDate.error) {
+      return res.status(400).json({ success: false, message: parsedDeliveryDate.error });
+    }
+    const resolvedDeliveryDate = parsedDeliveryDate.value ?? defaultSlot.deliveryDate;
+
+    const parsedHourDelivery = parseHourDelivery(hourDelivery);
+    if (parsedHourDelivery.error) {
+      return res.status(400).json({ success: false, message: parsedHourDelivery.error });
+    }
+    const resolvedHourDelivery = parsedHourDelivery.value ?? defaultSlot.hourDelivery;
 
     const parsedPaymentMethod = parsePaymentMethod(paymentMethod);
     if (parsedPaymentMethod.error) {
@@ -400,6 +438,8 @@ export const createOrder = async (req: Request, res: Response) => {
           paymentStatus: resolvedPaymentStatus,
           paidAt: resolvedPaidAt,
           paymentReference: resolvedPaymentReference,
+          deliveryDate: resolvedDeliveryDate,
+          hourDelivery: resolvedHourDelivery,
           status: OrderStatus.NEW,
           items: {
             create: normalizedItems,
@@ -459,8 +499,22 @@ export const updateOrder = async (req: Request, res: Response) => {
       paymentMethod,
       paymentStatus,
       paymentReference,
+      deliveryDate,
+      hourDelivery,
       items,
     } = req.body;
+
+    const parsedDeliveryDate = parseDeliveryDate(deliveryDate);
+    if (parsedDeliveryDate.error) {
+      return res.status(400).json({ success: false, message: parsedDeliveryDate.error });
+    }
+    const resolvedDeliveryDate = parsedDeliveryDate.value ?? existingOrder.deliveryDate;
+
+    const parsedHourDelivery = parseHourDelivery(hourDelivery);
+    if (parsedHourDelivery.error) {
+      return res.status(400).json({ success: false, message: parsedHourDelivery.error });
+    }
+    const resolvedHourDelivery = parsedHourDelivery.value ?? existingOrder.hourDelivery;
 
     const parsedPaymentMethod = parsePaymentMethod(paymentMethod);
     if (parsedPaymentMethod.error) {
@@ -573,6 +627,8 @@ export const updateOrder = async (req: Request, res: Response) => {
           paymentStatus: resolvedPaymentStatus,
           paidAt: resolvedPaidAt,
           paymentReference: resolvedPaymentReference,
+          deliveryDate: resolvedDeliveryDate,
+          hourDelivery: resolvedHourDelivery,
           items: {
             deleteMany: {},
             create: normalizedItems,
@@ -1030,6 +1086,8 @@ export const assignDriverToOrder = async (req: Request, res: Response) => {
         where: {
           driverId: targetDriver.id,
           storeId: existingOrder.storeId,
+          deliveryDate: existingOrder.deliveryDate,
+          hourDelivery: existingOrder.hourDelivery,
           status: { in: ['ASSIGNED', 'IN_TRANSIT'] },
         },
         orderBy: { createdAt: 'desc' },
@@ -1064,6 +1122,8 @@ export const assignDriverToOrder = async (req: Request, res: Response) => {
             driverId: targetDriver.id,
             status: 'ASSIGNED',
             totalDistance: null,
+            deliveryDate: existingOrder.deliveryDate,
+            hourDelivery: existingOrder.hourDelivery,
           },
         });
         nextSequence = 1;
@@ -1438,75 +1498,97 @@ export const bulkOrderAction = async (req: Request, res: Response) => {
         }
       } else if (action === 'ASSIGN_DRIVER' && targetDriver && targetDriver.driverProfile) {
         const driverStoreId = targetDriver.driverProfile.storeId;
-        let targetTrip = await tx.trip.findFirst({
-          where: {
-            driverId: targetDriver.id,
-            storeId: driverStoreId,
-            status: { in: ['ASSIGNED', 'IN_TRANSIT'] },
-          },
-          orderBy: { createdAt: 'desc' },
-        });
-
-        let nextSequence = 0;
-        let resolvedTripId: number;
-
-        if (targetTrip) {
-          const maxSeqAgg = await tx.order.aggregate({
-            where: { tripId: targetTrip.id },
-            _max: { deliverySequence: true },
-          });
-          nextSequence = maxSeqAgg._max.deliverySequence ?? 0;
-
-          await tx.trip.update({
-            where: { id: targetTrip.id },
-            data: { totalDistance: null },
-          });
-          resolvedTripId = targetTrip.id;
-        } else {
-          const suffix = `${Date.now().toString().slice(-6)}${Math.floor(Math.random() * 10)}`;
-          const createdTrip = await tx.trip.create({
-            data: {
-              tripCode: `TRIP-${suffix}`,
-              storeId: eligibleOrders[0].storeId,
-              driverId: targetDriver.id,
-              status: 'ASSIGNED',
-              totalDistance: null,
-            },
-          });
-          resolvedTripId = createdTrip.id;
+        const ordersBySlot = new Map<string, typeof eligibleOrders>();
+        for (const order of eligibleOrders) {
+          const slotKey = `${order.deliveryDate}|${order.hourDelivery}`;
+          const bucket = ordersBySlot.get(slotKey);
+          if (bucket) {
+            bucket.push(order);
+          } else {
+            ordersBySlot.set(slotKey, [order]);
+          }
         }
 
         const oldTripIdsToCleanup = new Set<number>();
+        let slotIndex = 0;
 
-        for (const order of eligibleOrders) {
-          if (order.status === OrderStatus.FAILED) {
-            await deductDepotStock(tx, order.storeId, order.store.name, order.items);
-          }
-          const isRetrySameTrip =
-            order.status === OrderStatus.FAILED &&
-            order.tripId === resolvedTripId;
+        for (const slotOrders of ordersBySlot.values()) {
+          slotIndex += 1;
+          const slotDeliveryDate = slotOrders[0].deliveryDate;
+          const slotHourDelivery = slotOrders[0].hourDelivery;
 
-          if (isRetrySameTrip) {
-            const seq = order.deliverySequence ?? ++nextSequence;
-            await tx.order.update({
-              where: { id: order.id },
-              data: {
-                status: OrderStatus.DELIVERING,
-                deliverySequence: seq,
-              },
+          const targetTrip = await tx.trip.findFirst({
+            where: {
+              driverId: targetDriver.id,
+              storeId: driverStoreId,
+              deliveryDate: slotDeliveryDate,
+              hourDelivery: slotHourDelivery,
+              status: { in: ['ASSIGNED', 'IN_TRANSIT'] },
+            },
+            orderBy: { createdAt: 'desc' },
+          });
+
+          let nextSequence = 0;
+          let resolvedTripId: number;
+
+          if (targetTrip) {
+            const maxSeqAgg = await tx.order.aggregate({
+              where: { tripId: targetTrip.id },
+              _max: { deliverySequence: true },
             });
+            nextSequence = maxSeqAgg._max.deliverySequence ?? 0;
+
+            await tx.trip.update({
+              where: { id: targetTrip.id },
+              data: { totalDistance: null },
+            });
+            resolvedTripId = targetTrip.id;
           } else {
-            nextSequence += 1;
-            await tx.order.update({
-              where: { id: order.id },
+            const suffix = `${Date.now().toString().slice(-6)}${slotIndex}${Math.floor(Math.random() * 10)}`;
+            const createdTrip = await tx.trip.create({
               data: {
-                tripId: resolvedTripId,
-                deliverySequence: nextSequence,
-                status: OrderStatus.DELIVERING,
+                tripCode: `TRIP-${suffix}`,
+                storeId: slotOrders[0].storeId,
+                driverId: targetDriver.id,
+                status: 'ASSIGNED',
+                totalDistance: null,
+                deliveryDate: slotDeliveryDate,
+                hourDelivery: slotHourDelivery,
               },
             });
-            if (order.tripId && order.tripId !== resolvedTripId) {
-              oldTripIdsToCleanup.add(order.tripId);
+            resolvedTripId = createdTrip.id;
+          }
+
+          for (const order of slotOrders) {
+            if (order.status === OrderStatus.FAILED) {
+              await deductDepotStock(tx, order.storeId, order.store.name, order.items);
+            }
+            const isRetrySameTrip =
+              order.status === OrderStatus.FAILED &&
+              order.tripId === resolvedTripId;
+
+            if (isRetrySameTrip) {
+              const seq = order.deliverySequence ?? ++nextSequence;
+              await tx.order.update({
+                where: { id: order.id },
+                data: {
+                  status: OrderStatus.DELIVERING,
+                  deliverySequence: seq,
+                },
+              });
+            } else {
+              nextSequence += 1;
+              await tx.order.update({
+                where: { id: order.id },
+                data: {
+                  tripId: resolvedTripId,
+                  deliverySequence: nextSequence,
+                  status: OrderStatus.DELIVERING,
+                },
+              });
+              if (order.tripId && order.tripId !== resolvedTripId) {
+                oldTripIdsToCleanup.add(order.tripId);
+              }
             }
           }
         }

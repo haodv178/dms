@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Circle, MapContainer, Marker, TileLayer, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
-import { AlertTriangle, CreditCard, MapPin, Plus, Search, Trash2, Warehouse } from 'lucide-react';
+import { AlertTriangle, Clock, CreditCard, MapPin, Plus, Search, Trash2, Warehouse } from 'lucide-react';
 import { Badge } from '@astryxdesign/core/Badge';
 import { Button } from '@astryxdesign/core/Button';
+import { DateInput } from '@astryxdesign/core/DateInput';
 import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog';
 import { IconButton } from '@astryxdesign/core/IconButton';
 import { Layout, LayoutContent, LayoutFooter } from '@astryxdesign/core/Layout';
@@ -20,6 +21,7 @@ import { Text } from '@astryxdesign/core/Text';
 import { TextInput } from '@astryxdesign/core/TextInput';
 import { fetchProducts } from '../api/dmsApi';
 import {
+  DELIVERY_HOURS,
   MAX_DELIVERY_DISTANCE_KM,
   PAYMENT_METHODS,
   PAYMENT_METHOD_CONFIG,
@@ -28,8 +30,12 @@ import {
   STATUS_CONFIG,
   computeOrderFormTotal,
   defaultPaymentStatusForMethod,
+  formatDeliveryDateShort,
+  formatTimeslot,
   formatVND,
   haversineDistanceKm,
+  toIsoDateString,
+  type DeliveryHour,
   type Order,
   type OrderFormState,
   type PaymentMethod,
@@ -531,6 +537,55 @@ export function OrderFormModal({
                   onChange={(val) => onFormChange({ ...form, customerAddress: val })}
                   placeholder="VD: 150 Nguyễn Lương Bằng, Quận 7, TP.HCM"
                 />
+              </div>
+
+              {/* Delivery Schedule (Date & Timeslot) */}
+              <div className="p-3 rounded-xl border border-border bg-muted/40 space-y-2.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5">
+                    <Clock className="w-4 h-4 text-accent" />
+                    <Text type="label" size="sm">
+                      Lịch giao hàng (11 khung giờ/ngày)
+                    </Text>
+                  </div>
+                  <Badge
+                    label={`${formatDeliveryDateShort(form.deliveryDate)} • ${formatTimeslot(form.hourDelivery)}`}
+                    variant="blue"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <DateInput
+                    label="Ngày giao hàng"
+                    isRequired
+                    width="100%"
+                    size="sm"
+                    format="system_date"
+                    value={toIsoDateString(form.deliveryDate)}
+                    onChange={(val) =>
+                      onFormChange({ ...form, deliveryDate: val ?? form.deliveryDate })
+                    }
+                  />
+
+                  <Selector
+                    label="Khung giờ giao hàng"
+                    variant="secondary"
+                    size="sm"
+                    width="100%"
+                    startIcon={<Clock className="w-3.5 h-3.5" />}
+                    options={DELIVERY_HOURS.map((hour) => ({
+                      value: String(hour),
+                      label: formatTimeslot(hour),
+                    }))}
+                    value={String(form.hourDelivery)}
+                    onChange={(val) =>
+                      onFormChange({
+                        ...form,
+                        hourDelivery: Number(val) as DeliveryHour,
+                      })
+                    }
+                  />
+                </div>
               </div>
 
               {/* Payment Info */}

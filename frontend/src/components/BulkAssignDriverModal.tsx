@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Check, Package, Search, Truck, Warehouse } from 'lucide-react';
+import { AlertTriangle, Check, Clock, Package, Search, Truck, Warehouse } from 'lucide-react';
 import { Badge } from '@astryxdesign/core/Badge';
 import { Button } from '@astryxdesign/core/Button';
 import { Card } from '@astryxdesign/core/Card';
@@ -11,6 +11,8 @@ import { Text } from '@astryxdesign/core/Text';
 import { TextInput } from '@astryxdesign/core/TextInput';
 import {
   DRIVER_STATUS_CONFIG,
+  formatDeliveryDateShort,
+  formatTimeslot,
   formatVND,
   getOrderCodAmount,
   type Driver,
@@ -65,6 +67,30 @@ export function BulkAssignDriverModal({
 
   const singleDepot = depotBreakdown.length === 1 ? depotBreakdown[0] : null;
   const isMultiDepot = depotBreakdown.length > 1;
+  const slotBreakdown = useMemo(() => {
+    const map = new Map<
+      string,
+      { deliveryDate: string; hourDelivery: number; count: number }
+    >();
+    for (const o of orders) {
+      const key = `${o.deliveryDate}|${o.hourDelivery}`;
+      const existing = map.get(key);
+      if (existing) {
+        existing.count += 1;
+      } else {
+        map.set(key, {
+          deliveryDate: o.deliveryDate,
+          hourDelivery: o.hourDelivery,
+          count: 1,
+        });
+      }
+    }
+    return Array.from(map.values()).sort((a, b) =>
+      a.deliveryDate !== b.deliveryDate
+        ? a.deliveryDate.localeCompare(b.deliveryDate)
+        : a.hourDelivery - b.hourDelivery
+    );
+  }, [orders]);
   const orderStoreIdSet = useMemo(
     () => new Set(depotBreakdown.map((d) => d.id)),
     [depotBreakdown]
@@ -182,6 +208,22 @@ export function BulkAssignDriverModal({
                           {singleDepot.name}
                         </Text>
                       </Text>
+                    </Stack>
+                  )}
+
+                  {slotBreakdown.length > 0 && (
+                    <Stack direction="horizontal" align="center" gap={1.5} wrap="wrap">
+                      <Clock className="w-3.5 h-3.5 text-accent shrink-0" />
+                      <Text type="supporting" size="xsm">
+                        Khung giờ ({slotBreakdown.length} chuyến):
+                      </Text>
+                      {slotBreakdown.map((s) => (
+                        <Badge
+                          key={`${s.deliveryDate}|${s.hourDelivery}`}
+                          label={`${formatDeliveryDateShort(s.deliveryDate)} • ${formatTimeslot(s.hourDelivery)} (${s.count})`}
+                          variant="blue"
+                        />
+                      ))}
                     </Stack>
                   )}
                 </Stack>

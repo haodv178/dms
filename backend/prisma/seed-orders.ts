@@ -1,6 +1,7 @@
 import { OrderStatus, PaymentMethod, PaymentStatus, PrismaClient } from '@prisma/client';
 import { checkDeliveryRadius, MAX_DELIVERY_DISTANCE_KM } from '../src/lib/geo';
 import { seedProducts } from '../src/lib/seeder';
+import { DELIVERY_HOURS, getVietnamNowParts } from '../src/lib/timeslot';
 
 const prisma = new PrismaClient();
 
@@ -1110,6 +1111,9 @@ async function main() {
 
       const orderCode = `ORD-${batchSuffix}-${String(seq).padStart(4, '0')}`;
       const paymentInfo = generatePaymentInfo(seq, batchSuffix);
+      const { deliveryDate: todayDeliveryDate } = getVietnamNowParts();
+      const hourDelivery =
+        DELIVERY_HOURS[Math.floor(Math.random() * DELIVERY_HOURS.length)];
 
       operations.push(
         prisma.order.create({
@@ -1126,6 +1130,8 @@ async function main() {
             paymentStatus: paymentInfo.paymentStatus,
             paidAt: paymentInfo.paidAt,
             paymentReference: paymentInfo.paymentReference,
+            deliveryDate: todayDeliveryDate,
+            hourDelivery,
             status: OrderStatus.NEW,
             items: {
               create: orderItems,

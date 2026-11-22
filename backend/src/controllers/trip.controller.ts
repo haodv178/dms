@@ -3,6 +3,11 @@ import { DriverStatus, OrderStatus, Prisma, Role } from '@prisma/client';
 import axios from 'axios';
 import prisma from '../lib/prisma';
 import { checkDeliveryRadius, MAX_DELIVERY_DISTANCE_KM } from '../lib/geo';
+import {
+  formatTimeslotLabel,
+  parseDeliveryDate,
+  parseHourDelivery,
+} from '../lib/timeslot';
 
 const PYTHON_SOLVER_URL = process.env.PYTHON_SOLVER_URL || 'http://localhost:8090';
 
@@ -134,7 +139,38 @@ export const optimizeAndCreateTrip = async (req: Request, res: Response) => {
       });
     }
 
-    // Tìm và kiểm tra tài xế được chọn hoặc tự động chọn tài xế AVAILABLE cùng depot
+    // 2c. Kiểm tra tất cả đơn hàng trong chuyến phải cùng ngày giao và cùng khung giờ giao (hourDelivery)
+    const distinctSlots = new Map<string, { deliveryDate: string; hourDelivery: number; codes: string[] }>();
+    for (const order of orders) {
+      const key = `${order.deliveryDate}|${order.hourDelivery}`;
+      const existing = distinctSlots.get(key);
+      if (existing) {
+        existing.codes.push(order.orderCode);
+      } else {
+        distinctSlots.set(key, {
+          deliveryDate: order.deliveryDate,
+          hourDelivery: order.hourDelivery,
+          codes: [order.orderCode],
+        });
+      }
+    }
+    if (distinctSlots.size > 1) {
+      const slotSummary = Array.from(distinctSlots.values())
+        .map(
+          (s) =>
+            `${s.deliveryDate} (${formatTimeslotLabel(s.hourDelivery)}): ${s.codes.join(', ')}`
+        )
+        .join(' | ');
+      return res.status(400).json({
+        success: false,
+        message: `Chuyến xe chỉ được gán các đơn hàng cùng ngày và cùng khung giờ giao! Các khung giờ đang chọn bị trộn lẫn: ${slotSummary}.`,
+      });
+    }
+
+    const tripDeliveryDate = orders[0].deliveryDate;
+    const tripHourDelivery = orders[0].hourDelivery;
+
+    // Tìm và kiểm tra tài xế được chọn hoặc tự động chọn tài xế rảnh trong khung giờ này cùng depot
     let assignedDriverId: number | null = driverId ? Number(driverId) : null;
     if (assignedDriverId !== null) {
       const selectedDriver = await prisma.user.findFirst({
@@ -175,24 +211,67 @@ export const optimizeAndCreateTrip = async (req: Request, res: Response) => {
           message: `Tài xế "${selectedDriver.name}" thuộc depot "${selectedDriver.driverProfile.store.name}", không thể nhận chuyến xuất phát từ depot "${store.name}".`,
         });
       }
+
+      const conflictingTrip = await prisma.trip.findFirst({
+        where: {
+          driverId: selectedDriver.id,
+          deliveryDate: tripDeliveryDate,
+          hourDelivery: tripHourDelivery,
+          status: { in: ['ASSIGNED', 'IN_TRANSIT'] },
+        },
+        select: { id: true, tripCode: true },
+      });
+      if (conflictingTrip) {
+        return res.status(400).json({
+          success: false,
+          message: `Tài xế "${selectedDriver.name}" đã có chuyến ${conflictingTrip.tripCode} trong khung giờ ${formatTimeslotLabel(tripHourDelivery)} ngày ${tripDeliveryDate}. Một tài xế không thể nhận 2 chuyến cùng khung giờ.`,
+        });
+      }
     } else {
-      const availableDriver = await prisma.user.findFirst({
+      const candidateDrivers = await prisma.user.findMany({
         where: {
           role: Role.DRIVER,
           driverProfile: {
             is: {
               isActive: true,
-              status: DriverStatus.AVAILABLE,
+              status: { not: DriverStatus.OFFLINE },
               storeId: store.id,
+            },
+          },
+          trips: {
+            none: {
+              deliveryDate: tripDeliveryDate,
+              hourDelivery: tripHourDelivery,
+              status: { in: ['ASSIGNED', 'IN_TRANSIT'] },
+            },
+          },
+        },
+        include: {
+          driverProfile: { select: { status: true } },
+          _count: {
+            select: {
+              trips: {
+                where: { status: { in: ['ASSIGNED', 'IN_TRANSIT'] } },
+              },
             },
           },
         },
         orderBy: { id: 'asc' },
       });
+
+      candidateDrivers.sort((a, b) => {
+        const aAvail = a.driverProfile?.status === DriverStatus.AVAILABLE ? 0 : 1;
+        const bAvail = b.driverProfile?.status === DriverStatus.AVAILABLE ? 0 : 1;
+        if (aAvail !== bAvail) return aAvail - bAvail;
+        if (a._count.trips !== b._count.trips) return a._count.trips - b._count.trips;
+        return a.id - b.id;
+      });
+
+      const availableDriver = candidateDrivers[0];
       if (!availableDriver) {
         return res.status(400).json({
           success: false,
-          message: `Depot "${store.name}" hiện không có tài xế nào đang sẵn sàng (AVAILABLE). Vui lòng chọn tài xế khác hoặc thêm tài xế cho depot này.`,
+          message: `Depot "${store.name}" hiện không có tài xế nào rảnh cho khung giờ ${formatTimeslotLabel(tripHourDelivery)} ngày ${tripDeliveryDate}. Vui lòng chọn tài xế khác hoặc thêm tài xế cho depot này.`,
         });
       }
       assignedDriverId = availableDriver.id;
@@ -227,6 +306,8 @@ export const optimizeAndCreateTrip = async (req: Request, res: Response) => {
         driverId: assignedDriverId,
         status: 'ASSIGNED',
         totalDistance: route.total_distance_meters,
+        deliveryDate: tripDeliveryDate,
+        hourDelivery: tripHourDelivery,
       },
     });
 
@@ -273,6 +354,10 @@ export const getTrips = async (req: Request, res: Response) => {
   try {
     const status = typeof req.query.status === 'string' ? req.query.status.trim() : '';
     const search = typeof req.query.search === 'string' ? req.query.search.trim() : '';
+    const rawDeliveryDate =
+      typeof req.query.deliveryDate === 'string' ? req.query.deliveryDate.trim() : '';
+    const rawHourDelivery =
+      typeof req.query.hourDelivery === 'string' ? req.query.hourDelivery.trim() : '';
 
     const whereClause: Prisma.TripWhereInput = {};
     if (req.user?.role === Role.DRIVER) {
@@ -280,6 +365,24 @@ export const getTrips = async (req: Request, res: Response) => {
     }
     if (status && status !== 'ALL') {
       whereClause.status = status;
+    }
+    if (rawDeliveryDate && rawDeliveryDate !== 'ALL') {
+      const parsedDate = parseDeliveryDate(rawDeliveryDate);
+      if (parsedDate.error) {
+        return res.status(400).json({ success: false, message: parsedDate.error });
+      }
+      if (parsedDate.value) {
+        whereClause.deliveryDate = parsedDate.value;
+      }
+    }
+    if (rawHourDelivery && rawHourDelivery !== 'ALL') {
+      const parsedHour = parseHourDelivery(rawHourDelivery);
+      if (parsedHour.error) {
+        return res.status(400).json({ success: false, message: parsedHour.error });
+      }
+      if (parsedHour.value !== undefined) {
+        whereClause.hourDelivery = parsedHour.value;
+      }
     }
     if (search) {
       whereClause.OR = [
@@ -301,7 +404,7 @@ export const getTrips = async (req: Request, res: Response) => {
     const trips = await prisma.trip.findMany({
       where: whereClause,
       include: TRIP_WITH_RELATIONS_INCLUDE,
-      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      orderBy: [{ deliveryDate: 'desc' }, { hourDelivery: 'asc' }, { createdAt: 'desc' }],
     });
     res.json({ success: true, data: trips });
   } catch (error: any) {
@@ -327,7 +430,7 @@ export const getMyActiveTrip = async (req: Request, res: Response) => {
     let activeTrip = await prisma.trip.findFirst({
       where: whereClause,
       include: TRIP_WITH_RELATIONS_INCLUDE,
-      orderBy: { createdAt: 'desc' },
+      orderBy: [{ deliveryDate: 'asc' }, { hourDelivery: 'asc' }, { createdAt: 'desc' }],
     });
 
     // Nếu không còn chuyến ASSIGNED/IN_TRANSIT thì lấy chuyến mới nhất để hiển thị trên bản đồ
@@ -468,6 +571,23 @@ export const reassignTripDriver = async (req: Request, res: Response) => {
       return res.status(400).json({
         success: false,
         message: `Tài xế "${targetDriver.name}" thuộc depot "${targetDriver.driverProfile.store.name}", không thể nhận chuyến ${existingTrip.tripCode} thuộc depot "${existingTrip.store.name}".`,
+      });
+    }
+
+    const conflictingTrip = await prisma.trip.findFirst({
+      where: {
+        id: { not: existingTrip.id },
+        driverId: targetDriver.id,
+        deliveryDate: existingTrip.deliveryDate,
+        hourDelivery: existingTrip.hourDelivery,
+        status: { in: ['ASSIGNED', 'IN_TRANSIT'] },
+      },
+      select: { id: true, tripCode: true },
+    });
+    if (conflictingTrip) {
+      return res.status(400).json({
+        success: false,
+        message: `Tài xế "${targetDriver.name}" đã được phân công chuyến ${conflictingTrip.tripCode} trong khung giờ ${formatTimeslotLabel(existingTrip.hourDelivery)} ngày ${existingTrip.deliveryDate}. Một tài xế không thể nhận 2 chuyến cùng khung giờ.`,
       });
     }
 

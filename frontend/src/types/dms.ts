@@ -199,6 +199,58 @@ export interface User {
   driverProfile?: UserDriverProfileSummary | null;
 }
 
+export const DELIVERY_HOURS = [9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19] as const;
+export type DeliveryHour = (typeof DELIVERY_HOURS)[number];
+export type ISODateString = `${number}${number}${number}${number}-${number}${number}-${number}${number}`;
+
+export function toIsoDateString(val: string | null | undefined): ISODateString | undefined {
+  if (!val) return undefined;
+  const trimmed = val.trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(trimmed) ? (trimmed as ISODateString) : undefined;
+}
+
+export function formatTimeslot(hour: number | null | undefined): string {
+  if (hour === null || hour === undefined || !Number.isFinite(hour)) return '—';
+  const start = String(hour).padStart(2, '0');
+  const end = String(hour + 1).padStart(2, '0');
+  return `${start}:00 - ${end}:00`;
+}
+
+export function formatDeliveryDateShort(dateStr: string | null | undefined): string {
+  if (!dateStr) return '—';
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr.trim());
+  if (!match) return dateStr;
+  return `${match[3]}/${match[2]}/${match[1]}`;
+}
+
+export function getDefaultDeliveryDate(): string {
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Ho_Chi_Minh',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+  const parts = formatter.formatToParts(new Date());
+  const y = parts.find((p) => p.type === 'year')?.value ?? '2026';
+  const m = parts.find((p) => p.type === 'month')?.value ?? '01';
+  const d = parts.find((p) => p.type === 'day')?.value ?? '01';
+  return `${y}-${m}-${d}`;
+}
+
+export function getDefaultDeliveryHour(): DeliveryHour {
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Ho_Chi_Minh',
+    hour: '2-digit',
+    hour12: false,
+  });
+  const parts = formatter.formatToParts(new Date());
+  const rawHour = Number(parts.find((p) => p.type === 'hour')?.value ?? '9');
+  const hour = Number.isFinite(rawHour) ? rawHour % 24 : 9;
+  if (hour < 9) return 9;
+  if (hour > 19) return 19;
+  return hour as DeliveryHour;
+}
+
 export interface Trip {
   id: number;
   tripCode: string;
@@ -208,6 +260,8 @@ export interface Trip {
   store?: Store;
   status: string;
   totalDistance: number | null;
+  deliveryDate: string;
+  hourDelivery: number;
   orders?: Order[];
   createdAt: string;
 }
@@ -232,6 +286,8 @@ export interface Order {
   tripId: number | null;
   trip?: Trip | null;
   deliverySequence: number | null;
+  deliveryDate: string;
+  hourDelivery: number;
   createdAt: string;
 }
 
@@ -253,6 +309,8 @@ export interface OrderFormState {
   paymentMethod: PaymentMethod;
   paymentStatus: PaymentStatus;
   paymentReference: string;
+  deliveryDate: string;
+  hourDelivery: DeliveryHour;
   items: OrderItemFormState[];
 }
 
@@ -365,11 +423,26 @@ export const INITIAL_ORDER_FORM: OrderFormState = {
   paymentMethod: 'COD',
   paymentStatus: 'UNPAID',
   paymentReference: '',
+  deliveryDate: getDefaultDeliveryDate(),
+  hourDelivery: getDefaultDeliveryHour(),
   items: [],
 };
 
+export function createInitialOrderForm(storeId = ''): OrderFormState {
+  return {
+    ...INITIAL_ORDER_FORM,
+    storeId,
+    deliveryDate: getDefaultDeliveryDate(),
+    hourDelivery: getDefaultDeliveryHour(),
+  };
+}
+
 export function orderToFormState(order: Order, catalog: Product[] = []): OrderFormState {
   const byName = new Map(catalog.map((p) => [p.name.toLowerCase(), p]));
+  const clampedHour =
+    order.hourDelivery >= 9 && order.hourDelivery <= 19
+      ? (order.hourDelivery as DeliveryHour)
+      : getDefaultDeliveryHour();
   return {
     storeId: String(order.storeId),
     customerName: order.customerName,
@@ -380,6 +453,8 @@ export function orderToFormState(order: Order, catalog: Product[] = []): OrderFo
     paymentMethod: order.paymentMethod ?? 'COD',
     paymentStatus: order.paymentStatus ?? 'UNPAID',
     paymentReference: order.paymentReference ?? '',
+    deliveryDate: order.deliveryDate || getDefaultDeliveryDate(),
+    hourDelivery: clampedHour,
     items: (order.items ?? []).map((item) => {
       const matched = byName.get(item.productName.toLowerCase());
       return {
@@ -715,6 +790,8 @@ export interface DriverActiveTrip {
   id: number;
   tripCode: string;
   status: string;
+  deliveryDate: string;
+  hourDelivery: number;
   ordersCount: number;
 }
 
@@ -740,9 +817,31 @@ export interface Driver {
   isActive: boolean;
   notes: string;
   activeTrip: DriverActiveTrip | null;
+  activeTrips?: DriverActiveTrip[];
   totalTrips: number;
   createdAt: string;
   updatedAt: string;
+}
+
+export function getDriverActiveTrips(driver: Driver): DriverActiveTrip[] {
+  if (Array.isArray(driver.activeTrips)) return driver.activeTrips;
+  return driver.activeTrip ? [driver.activeTrip] : [];
+}
+
+export function findDriverSlotConflict(
+  driver: Driver,
+  deliveryDate: string,
+  hourDelivery: number,
+  excludeTripId?: number
+): DriverActiveTrip | null {
+  return (
+    getDriverActiveTrips(driver).find(
+      (t) =>
+        t.deliveryDate === deliveryDate &&
+        t.hourDelivery === hourDelivery &&
+        (excludeTripId === undefined || t.id !== excludeTripId)
+    ) ?? null
+  );
 }
 
 export interface DriverPagination {

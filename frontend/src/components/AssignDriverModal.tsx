@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Check, MapPin, Search, Truck, UserMinus, Warehouse } from 'lucide-react';
+import { Check, Clock, MapPin, Search, Truck, UserMinus, Warehouse } from 'lucide-react';
 import { Badge } from '@astryxdesign/core/Badge';
 import { Button } from '@astryxdesign/core/Button';
 import { Card } from '@astryxdesign/core/Card';
@@ -12,6 +12,9 @@ import { TextInput } from '@astryxdesign/core/TextInput';
 import {
   DRIVER_STATUS_CONFIG,
   STATUS_CONFIG,
+  findDriverSlotConflict,
+  formatDeliveryDateShort,
+  formatTimeslot,
   formatVND,
   type Driver,
   type Order,
@@ -133,6 +136,11 @@ export function AssignDriverModal({
                         {statusMeta && (
                           <Badge label={statusMeta.shortLabel} variant={statusMeta.badgeVariant} />
                         )}
+                        <Badge
+                          label={`${formatDeliveryDateShort(order.deliveryDate)} • ${formatTimeslot(order.hourDelivery)}`}
+                          variant="blue"
+                          icon={<Clock className="w-3 h-3" />}
+                        />
                       </Stack>
                       <Text type="label" size="sm" hasTabularNumbers>
                         {formatVND(order.totalAmount)}
@@ -223,12 +231,16 @@ export function AssignDriverModal({
                         const isSelected = selectedDriverId === driver.id;
                         const isCurrent = currentDriverId === driver.id && isDelivering;
                         const driverStatusMeta = DRIVER_STATUS_CONFIG[driver.status];
-                        const activeOrdersCount = driver.activeTrip?.ordersCount ?? 0;
+                        const sameSlotTrip = findDriverSlotConflict(
+                          driver,
+                          order.deliveryDate,
+                          order.hourDelivery
+                        );
 
-                        const badgeLabel =
-                          driver.status === 'ON_DELIVERY' && activeOrdersCount > 0
-                            ? `${driverStatusMeta.shortLabel} (${activeOrdersCount} đơn)`
-                            : driverStatusMeta.shortLabel;
+                        const badgeLabel = sameSlotTrip
+                          ? `Ghép ${sameSlotTrip.tripCode} (${sameSlotTrip.ordersCount} đơn)`
+                          : 'Tạo chuyến mới';
+                        const badgeVariant = sameSlotTrip ? 'blue' : 'green';
 
                         return (
                           <ListItem
@@ -248,14 +260,12 @@ export function AssignDriverModal({
                             label={
                               isCurrent ? `${driver.name} (Hiện tại)` : driver.name
                             }
-                            description={`${driver.vehicleType} • ${driver.licensePlate} • ${driver.phone}${
-                              driver.activeTrip ? ` • ${driver.activeTrip.tripCode}` : ''
-                            }`}
+                            description={`${driver.vehicleType} • ${driver.licensePlate} • ${driver.phone} • ${driverStatusMeta.shortLabel}`}
                             endContent={
                               <Stack direction="horizontal" align="center" gap={2}>
                                 <Badge
                                   label={badgeLabel}
-                                  variant={driverStatusMeta.badgeVariant}
+                                  variant={badgeVariant}
                                 />
                                 {isSelected && (
                                   <Check className="w-4 h-4 text-accent shrink-0" />

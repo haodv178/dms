@@ -17,10 +17,12 @@ import {
 import { Badge } from '@astryxdesign/core/Badge';
 import { Button } from '@astryxdesign/core/Button';
 import { Card } from '@astryxdesign/core/Card';
+import { DateInput } from '@astryxdesign/core/DateInput';
 import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog';
 import { Heading } from '@astryxdesign/core/Heading';
 import { IconButton } from '@astryxdesign/core/IconButton';
 import { Layout, LayoutContent, LayoutFooter } from '@astryxdesign/core/Layout';
+import { Selector } from '@astryxdesign/core/Selector';
 import { Tab, TabList } from '@astryxdesign/core/TabList';
 import { Text } from '@astryxdesign/core/Text';
 import { TextInput } from '@astryxdesign/core/TextInput';
@@ -28,6 +30,7 @@ import { CreateTripModal } from './CreateTripModal';
 import { ReassignTripDriverModal } from './ReassignTripDriverModal';
 import { RouteMap } from './RouteMap';
 import {
+  DELIVERY_HOURS,
   PAYMENT_METHOD_CONFIG,
   PAYMENT_STATUS_CONFIG,
   STATUS_CONFIG,
@@ -38,10 +41,13 @@ import {
   canRoleStartTrip,
   canRoleUpdateStopDelivery,
   formatDateTime,
+  formatDeliveryDateShort,
+  formatTimeslot,
   formatVND,
   getOrderCodAmount,
   isOrderPrepaid,
   isOrderUnpaidOnline,
+  toIsoDateString,
   type Driver,
   type Order,
   type Role,
@@ -102,6 +108,8 @@ export function TripManagementPage({
   onFailDelivery,
 }: TripManagementPageProps) {
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
+  const [deliveryDateFilter, setDeliveryDateFilter] = useState<string>('');
+  const [hourDeliveryFilter, setHourDeliveryFilter] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedTripId, setSelectedTripId] = useState<number | null>(null);
   const [showCreateModal, setShowCreateModal] = useState<boolean>(false);
@@ -128,6 +136,12 @@ export function TripManagementPage({
       if (statusFilter !== 'ALL' && trip.status !== statusFilter) {
         return false;
       }
+      if (deliveryDateFilter && trip.deliveryDate !== deliveryDateFilter) {
+        return false;
+      }
+      if (hourDeliveryFilter !== 'ALL' && String(trip.hourDelivery) !== hourDeliveryFilter) {
+        return false;
+      }
       if (!q) return true;
       const driverName = trip.driver?.name?.toLowerCase() ?? '';
       const plate = trip.driver?.driverProfile?.licensePlate?.toLowerCase() ?? '';
@@ -143,7 +157,7 @@ export function TripManagementPage({
         hasMatchingOrder
       );
     });
-  }, [trips, statusFilter, searchQuery]);
+  }, [trips, statusFilter, deliveryDateFilter, hourDeliveryFilter, searchQuery]);
 
   // Keep selectedTripId pointing to a valid trip in filteredTrips (or first trip)
   useEffect(() => {
@@ -354,6 +368,41 @@ export function TripManagementPage({
                 startIcon={<Search className="w-4 h-4" />}
                 size="sm"
               />
+
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="flex-1 min-w-[180px]">
+                  <DateInput
+                    label="Lọc theo ngày giao"
+                    isLabelHidden
+                    size="sm"
+                    width="100%"
+                    format="system_date"
+                    hasClear
+                    placeholder="Tất cả ngày giao"
+                    value={toIsoDateString(deliveryDateFilter)}
+                    onChange={(val) => setDeliveryDateFilter(val ?? '')}
+                  />
+                </div>
+                <div className="flex-1 min-w-[155px]">
+                  <Selector
+                    label="Lọc theo khung giờ"
+                    isLabelHidden
+                    variant="secondary"
+                    size="sm"
+                    width="100%"
+                    startIcon={<Clock className="w-3.5 h-3.5" />}
+                    options={[
+                      { value: 'ALL', label: 'Tất cả khung giờ' },
+                      ...DELIVERY_HOURS.map((hour) => ({
+                        value: String(hour),
+                        label: formatTimeslot(hour),
+                      })),
+                    ]}
+                    value={hourDeliveryFilter}
+                    onChange={(val) => setHourDeliveryFilter(String(val))}
+                  />
+                </div>
+              </div>
             </div>
           </Card>
 
@@ -414,7 +463,7 @@ export function TripManagementPage({
                       }`}
                     >
                       <div className="flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-2 min-w-0">
+                        <div className="flex items-center gap-2 min-w-0 flex-wrap">
                           <Text type="label" size="sm">
                             {trip.tripCode}
                           </Text>
@@ -422,9 +471,14 @@ export function TripManagementPage({
                             label={statusMeta.shortLabel}
                             variant={statusMeta.badgeVariant}
                           />
+                          <Badge
+                            label={formatTimeslot(trip.hourDelivery)}
+                            variant="purple"
+                            icon={<Clock className="w-3 h-3" />}
+                          />
                         </div>
                         <Text type="supporting" size="2xs" hasTabularNumbers>
-                          {formatDateTime(trip.createdAt)}
+                          {formatDeliveryDateShort(trip.deliveryDate)}
                         </Text>
                       </div>
 
@@ -504,6 +558,11 @@ export function TripManagementPage({
                       <Badge
                         label={getTripStatusMeta(selectedTrip.status).label}
                         variant={getTripStatusMeta(selectedTrip.status).badgeVariant}
+                      />
+                      <Badge
+                        label={`${formatDeliveryDateShort(selectedTrip.deliveryDate)} • ${formatTimeslot(selectedTrip.hourDelivery)}`}
+                        variant="purple"
+                        icon={<Clock className="w-3 h-3" />}
                       />
                     </div>
                     <Text type="supporting" size="xsm">
@@ -705,7 +764,7 @@ export function TripManagementPage({
         isOpen={showCreateModal}
         onOpenChange={setShowCreateModal}
         packedOrders={packedOrders}
-        availableDrivers={availableDrivers}
+        availableDrivers={assignableDrivers.length > 0 ? assignableDrivers : availableDrivers}
         stores={stores}
         defaultDepot={depot}
         submitting={optimizing}
